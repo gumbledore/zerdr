@@ -64,7 +64,8 @@ Logs: `~/.local/state/zed-herdr/bridge.log`.
   diagnostics) to outside processes, so use `ctrl-alt-l` to send a selection instead.
 - The bridge saves exactly what's in the buffer. If you have format-on-save turned on,
   the formatted text is what Claude gets.
-- The finish notification fires after every agent turn that leaves changes, not once per task.
+- herdr marks an agent `done` whenever it stops unwatched, which happens every turn. The notification
+  only fires when the agent's work changed since the last one, so turns that only chat stay quiet.
 - Zed's own `git: branch diff` (same base, with staging) can't be triggered from outside;
   run it from the command palette once `review` has brought the window up.
 - Zed passes task args through a shell without quoting, so paths with spaces break the Zed tasks.

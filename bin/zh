@@ -98,6 +98,12 @@ done)
   files=$(changed "$root" "$rev" | tr -cd '\0' | wc -c)
   commits=0; [[ $rev != HEAD ]] && commits=$(git -C "$root" rev-list --count "$rev..HEAD")
   ((files + commits)) || exit 0
+  # herdr reports "done" whenever the agent stops unwatched, i.e. every turn.
+  # Only notify when the work itself changed since the last notification for this project.
+  fp=$(cd "$root" && { git diff "$rev"; git ls-files -z --others --exclude-standard | xargs -0r sha1sum; } | sha1sum)
+  seen="$STATE/done/$(sha1sum <<<"$root" | cut -c1-16)"
+  [[ $(cat "$seen" 2>/dev/null) == "$fp" ]] && exit 0
+  mkdir -p "$STATE/done" && echo "$fp" >"$seen"
   btn=(-A default="Review changes") # default = click on the body, for daemons without buttons
   ((commits)) && btn+=(-A commits=Commits)
   # detach: notify-send -A blocks until clicked, event hooks should return
