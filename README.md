@@ -29,8 +29,8 @@ worktree-aware:
 | herdr | `kmg.zed.review` | the agent's net work: one editable diff tab per changed file, vs the branch's fork point from main (committed + uncommitted), or vs HEAD when on main |
 | herdr | `kmg.zed.commits` | each commit since the fork point (last 10) in Zed's native commit view |
 | herdr (automatic) | agent finishes | notification "Agent done: <project>, N files, M commits". Click it to run `review`; the *Commits* button (if your daemon shows buttons) runs `commits` |
-| Zed | `ctrl-alt-h` | focus the project's herdr agent and raise the terminal |
-| Zed | `ctrl-alt-l` | type `@file#Lx-y` (current selection) into that agent's prompt, then focus it |
+| Zed | `ctrl-space` | focus the project's herdr agent and raise the terminal |
+| Zed | `ctrl-shift-space` | type `@file#Lx-y` (current selection) into that agent's prompt, then focus it |
 
 ## Install
 

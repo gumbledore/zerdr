@@ -2,13 +2,14 @@
   {
     "context": "Workspace",
     "bindings": {
-      "ctrl-alt-h": ["task::Spawn", { "task_name": "herdr: focus agent" }]
+      "ctrl-space": ["task::Spawn", { "task_name": "herdr: focus agent" }]
     }
   },
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-alt-l": ["task::Spawn", { "task_name": "herdr: send file/selection to agent" }]
+      "ctrl-space": ["task::Spawn", { "task_name": "herdr: focus agent" }],
+      "ctrl-shift-space": ["task::Spawn", { "task_name": "herdr: send file/selection to agent" }]
     }
   }
 ]
