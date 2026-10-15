@@ -17,7 +17,7 @@ command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" open"]
 
 [[actions]]
 id = "review"
-title = "Zed: review uncommitted changes (multi-diff)"
+title = "Zed: review agent changes vs branch base"
 contexts = ["pane"]
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" review"]
 
@@ -26,3 +26,13 @@ id = "bridge"
 title = "Zed: restart Claude Code IDE bridge"
 contexts = ["workspace"]
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" bridge"]
+
+[[actions]]
+id = "commits"
+title = "Zed: open agent commits"
+contexts = ["pane"]
+command = ["sh", "-c", 'exec "$HERDR_PLUGIN_ROOT/bin/zh" commits']
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["sh", "-c", 'exec "$HERDR_PLUGIN_ROOT/bin/zh" done']

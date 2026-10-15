@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # zh — glue between herdr panes and Zed windows.
 #   zh open   [dir]                 open dir's project (git root) in its Zed window
-#   zh review [dir]                 Zed multi-diff of the project's uncommitted changes vs HEAD
+#   zh review [dir]                 diff tabs of the agent's work vs its base (see base_of)
+#   zh commits [dir]                Zed commit view for each commit since the base
+#   zh done                         herdr event hook: notify with review buttons when an agent finishes
 #   zh focus  <root>                focus the herdr agent working in <root> (and raise the terminal)
 #   zh mention <root> <file> <row>  type an @file#Lx-y reference into that agent
 #   zh bridge                       (re)start the Claude Code -> Zed IDE bridge
@@ -37,6 +39,23 @@ agent_for() {
   return 1
 }
 
+# what the agent's work is measured against: on a feature branch, its fork point
+# from the default branch (committed + uncommitted work); otherwise HEAD (uncommitted only)
+base_of() {
+  local def mb
+  def=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) ||
+    def=$(git -C "$1" rev-parse -q --verify main >/dev/null && echo main) ||
+    def=$(git -C "$1" rev-parse -q --verify master >/dev/null && echo master) || { echo HEAD; return; }
+  mb=$(git -C "$1" merge-base HEAD "$def" 2>/dev/null) && [[ $mb != $(git -C "$1" rev-parse HEAD) ]] &&
+    { echo "$mb"; return; }
+  echo HEAD
+}
+
+# NUL-separated files changed vs base, plus untracked
+changed() {
+  { git -C "$1" diff -z --name-only "$2" 2>/dev/null; git -C "$1" ls-files -z --others --exclude-standard; } | sort -zu
+}
+
 cmd=${1:-}; shift || true
 case $cmd in
 open)
@@ -46,16 +65,49 @@ open)
 review)
   root=$(root_of "${1:-$(pane_cwd)}")
   cd "$root"
-  base=$(mktemp -d "${TMPDIR:-/tmp}/zh-review.XXXX")/HEAD
+  rev=$(base_of "$root")
+  base=$(mktemp -d "${TMPDIR:-/tmp}/zh-review.XXXX")/$(git rev-parse --short "$rev")
   args=()
   while IFS= read -r -d '' f; do
     [[ -e $f ]] || continue # deletions: nothing to show on the right
     mkdir -p "$base/$(dirname "$f")"
-    git show "HEAD:$f" >"$base/$f" 2>/dev/null || : >"$base/$f"
+    git show "$rev:$f" >"$base/$f" 2>/dev/null || : >"$base/$f"
     args+=(--diff "$base/$f" "$root/$f")
-  done < <({ git diff -z --name-only HEAD 2>/dev/null; git ls-files -z --others --exclude-standard; } | sort -zu)
+  done < <(changed "$root" "$rev")
   ((${#args[@]})) || { notify-send "zh" "No changes in $(basename "$root")" 2>/dev/null; exit 0; }
   exec "$ZED" "${args[@]}" "$root"
+  ;;
+commits)
+  root=$(root_of "${1:-$(pane_cwd)}")
+  cd "$root"
+  rev=$(base_of "$root")
+  [[ $rev == HEAD ]] && range=(-1 HEAD) || range=("$rev..HEAD")
+  # native Zed commit view, routed to this project's window; newest last so it ends up focused
+  git rev-list --reverse "${range[@]}" | tail -n "${ZH_MAX_COMMITS:-10}" | while read -r sha; do
+    "$ZED" "zed://git/commit/$sha?repo=$root"
+  done
+  ;;
+done)
+  ev=${HERDR_PLUGIN_EVENT_JSON:-}
+  read -r pane status < <(jq -r '[.. | objects | select(has("agent_status"))][0] | "\(.pane_id) \(.agent_status)"' <<<"$ev")
+  [[ $status == done && -n $pane ]] || exit 0
+  cwd=$("$HERDR" pane get "$pane" | jq -er '.result.pane.foreground_cwd // .result.pane.cwd') || exit 0
+  root=$(root_of "$cwd")
+  git -C "$root" rev-parse -q --git-dir >/dev/null || exit 0
+  rev=$(base_of "$root")
+  files=$(changed "$root" "$rev" | tr -cd '\0' | wc -c)
+  commits=0; [[ $rev != HEAD ]] && commits=$(git -C "$root" rev-list --count "$rev..HEAD")
+  ((files + commits)) || exit 0
+  btn=(-A default="Review changes") # default = click on the body, for daemons without buttons
+  ((commits)) && btn+=(-A commits=Commits)
+  # detach: notify-send -A blocks until clicked, event hooks should return
+  (
+    act=$(notify-send -a herdr "${btn[@]}" \
+      "Agent done: $(basename "$root")" "$files file(s) changed, $commits commit(s)") || exit 0
+    [[ $act == default ]] && act=review
+    [[ -n $act ]] && exec "$0" "$act" "$root"
+  ) </dev/null >/dev/null 2>&1 &
+  disown
   ;;
 focus)
   root=$(root_of "$1") # Zed may have a subdir open
@@ -96,7 +148,7 @@ bridge)
   echo $! >"$STATE/bridge.pid"
   ;;
 *)
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
   ;;
 esac

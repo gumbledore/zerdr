@@ -31,7 +31,9 @@ worktree-aware:
 |---|---|---|
 | Claude (any herdr pane) | edit needs permission | diff opens in that project's Zed window. **Save** (ctrl-s) in Zed accepts, including any edits you made on the right side. **Close the tab** to reject. Or answer in the terminal as usual. |
 | herdr | `kmg.zed.open` | open/focus the pane's project in Zed |
-| herdr | `kmg.zed.review` | one diff tab per uncommitted file (vs HEAD), editable |
+| herdr | `kmg.zed.review` | the agent's net work: one editable diff tab per changed file, vs the branch's fork point from main (committed + uncommitted), or vs HEAD when on main |
+| herdr | `kmg.zed.commits` | each commit since the fork point (last 10) in Zed's native commit view |
+| herdr (automatic) | agent finishes | notification "Agent done: <project>, N files, M commits". Click it to run `review`; the *Commits* button (if your daemon shows buttons) runs `commits` |
 | herdr | `kmg.zed.bridge` | restart the bridge (live Claude sessions reconnect on their own) |
 | Zed | `ctrl-alt-h` | focus the project's herdr agent and raise the terminal |
 | Zed | `ctrl-alt-l` | type `@file#Lx-y` (current selection) into that agent's prompt, then focus it |
@@ -62,4 +64,7 @@ Logs: `~/.local/state/zed-herdr/bridge.log`.
   diagnostics) to outside processes, so use `ctrl-alt-l` to send a selection instead.
 - The bridge saves exactly what's in the buffer. If you have format-on-save turned on,
   the formatted text is what Claude gets.
+- The finish notification fires after every agent turn that leaves changes, not once per task.
+- Zed's own `git: branch diff` (same base, with staging) can't be triggered from outside;
+  run it from the command palette once `review` has brought the window up.
 - Zed passes task args through a shell without quoting, so paths with spaces break the Zed tasks.

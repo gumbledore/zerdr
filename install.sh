@@ -31,5 +31,11 @@ Suggested herdr keybindings (~/.config/herdr/config.toml):
   command = "kmg.zed.review"
   description = "review changes in Zed"
 
+  [[keys.command]]
+  key = "prefix+ctrl+e"
+  type = "plugin_action"
+  command = "kmg.zed.commits"
+  description = "open agent commits in Zed"
+
 Make Claude connect automatically: run `claude --ide`, or /config -> "Auto-connect to IDE".
 MSG
