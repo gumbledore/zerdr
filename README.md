@@ -23,14 +23,16 @@ worktree-aware:
 
 ## Use
 
-| Where | Action | Effect |
+| Where | Key (action) | Effect |
 |---|---|---|
-| herdr | `kmg.zed.open` | open/focus the pane's project in Zed |
-| herdr | `kmg.zed.review` | the agent's net work: one editable diff tab per changed file, vs the branch's fork point from main (committed + uncommitted), or vs HEAD when on main |
-| herdr | `kmg.zed.commits` | each commit since the fork point (last 10) in Zed's native commit view |
-| herdr (automatic) | agent finishes | notification "Agent done: <project>, N files, M commits". Click it to run `review`; the *Commits* button (if your daemon shows buttons) runs `commits` |
+| herdr | `prefix+z` (`kmg.zed.open`) | open/focus the pane's project in Zed |
+| herdr | `prefix+shift+z` (`kmg.zed.review`) | the agent's net work, committed + uncommitted: one editable diff tab per changed file, vs the branch's fork point from the default branch (`origin/HEAD`, else `main`/`master`), or vs HEAD when nothing is ahead of it |
+| herdr | `prefix+ctrl+z` (`kmg.zed.commits`) | each commit since the fork point (last 10) in Zed's native commit view |
+| herdr | automatic, agent finishes | notification "Agent done: \<project\>" / "N file(s) changed, M commit(s)". Click it to run `review`; the *Commits* button (if your daemon shows buttons) runs `commits` |
 | Zed | `ctrl-space` | focus the project's herdr agent and raise the terminal |
-| Zed | `ctrl-shift-space` | type `@file#Lx-y` (current selection) into that agent's prompt, then focus it |
+| Zed (editor) | `ctrl-shift-space` | type `@file#Lx-y` (current selection) into that agent's prompt, then focus it |
+
+The herdr keys are the ones `install.sh` suggests; `prefix+z` replaces herdr's default zoom.
 
 ## Install
 
