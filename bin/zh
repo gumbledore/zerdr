@@ -82,9 +82,13 @@ commits)
   cd "$root"
   rev=$(base_of "$root")
   [[ $rev == HEAD ]] && range=(-1 HEAD) || range=("$rev..HEAD")
-  # native Zed commit view, routed to this project's window; newest last so it ends up focused
+  # Native Zed commit view. Raise the project's window first and space the URLs out:
+  # fired back to back, each URL can race the others and open its own window.
+  "$ZED" "$root"
+  sleep 1
   git rev-list --reverse "${range[@]}" | tail -n "${ZH_MAX_COMMITS:-10}" | while read -r sha; do
     "$ZED" "zed://git/commit/$sha?repo=$root"
+    sleep 0.4
   done
   ;;
 done)
