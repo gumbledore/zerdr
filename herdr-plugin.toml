@@ -1,0 +1,28 @@
+id = "kmg.zed"
+name = "Zed"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Match herdr panes to Zed projects; show Claude Code diffs in Zed"
+platforms = ["linux"]
+
+# Claude Code -> Zed IDE bridge (detaches; restarted on each server start)
+[[startup]]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" bridge"]
+
+[[actions]]
+id = "open"
+title = "Zed: open this pane's project"
+contexts = ["pane"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" open"]
+
+[[actions]]
+id = "review"
+title = "Zed: review uncommitted changes (multi-diff)"
+contexts = ["pane"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" review"]
+
+[[actions]]
+id = "bridge"
+title = "Zed: restart Claude Code IDE bridge"
+contexts = ["workspace"]
+command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/zh\" bridge"]

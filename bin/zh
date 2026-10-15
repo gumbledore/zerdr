@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# zh — glue between herdr panes and Zed windows.
+#   zh open   [dir]                 open dir's project (git root) in its Zed window
+#   zh review [dir]                 Zed multi-diff of the project's uncommitted changes vs HEAD
+#   zh focus  <root>                focus the herdr agent working in <root> (and raise the terminal)
+#   zh mention <root> <file> <row>  type an @file#Lx-y reference into that agent
+#   zh bridge                       (re)start the Claude Code -> Zed IDE bridge
+set -euo pipefail
+
+ZED=${ZED_BIN:-zeditor}
+HERDR=${HERDR_BIN_PATH:-herdr}
+TERM_CLASS=${ZH_TERMINAL_CLASS:-com.mitchellh.ghostty}
+HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/zed-herdr
+
+root_of() { git -C "$1" rev-parse --show-toplevel 2>/dev/null || echo "$1"; }
+
+# cwd of the herdr pane that invoked us (plugin action / keybinding), else $PWD
+pane_cwd() {
+  local p=${HERDR_ACTIVE_PANE_ID:-${HERDR_PANE_ID:-}}
+  [[ -n ${HERDR_ACTIVE_PANE_CWD:-} ]] && { echo "$HERDR_ACTIVE_PANE_CWD"; return; }
+  [[ -n $p ]] && "$HERDR" pane get "$p" 2>/dev/null | jq -er '.result.pane.foreground_cwd // .result.pane.cwd' && return
+  echo "$PWD"
+}
+
+# best agent pane for a project root: blocked > done > working > idle.
+# Same git root required, so worktrees nested inside the main checkout don't match it.
+agent_for() {
+  local list pane cwd
+  list=$("$HERDR" agent list | jq -r --arg r "$1" '
+    [.result.agents[] | (.cwd // "") as $c | select($c == $r or ($c | startswith($r + "/")))]
+    | sort_by({"blocked":0,"done":1,"working":2,"idle":3}[.agent_status] // 4)
+    | .[] | "\(.pane_id)\t\(.cwd)"')
+  while IFS=$'\t' read -r pane cwd; do
+    [[ -n $pane && $(root_of "$cwd") == "$1" ]] && { echo "$pane"; return 0; }
+  done <<<"$list"
+  return 1
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+open)
+  root=$(root_of "${1:-$(pane_cwd)}")
+  cd "$root" && exec "$ZED" "$root"
+  ;;
+review)
+  root=$(root_of "${1:-$(pane_cwd)}")
+  cd "$root"
+  base=$(mktemp -d "${TMPDIR:-/tmp}/zh-review.XXXX")/HEAD
+  args=()
+  while IFS= read -r -d '' f; do
+    [[ -e $f ]] || continue # deletions: nothing to show on the right
+    mkdir -p "$base/$(dirname "$f")"
+    git show "HEAD:$f" >"$base/$f" 2>/dev/null || : >"$base/$f"
+    args+=(--diff "$base/$f" "$root/$f")
+  done < <({ git diff -z --name-only HEAD 2>/dev/null; git ls-files -z --others --exclude-standard; } | sort -zu)
+  ((${#args[@]})) || { notify-send "zh" "No changes in $(basename "$root")" 2>/dev/null; exit 0; }
+  exec "$ZED" "${args[@]}" "$root"
+  ;;
+focus)
+  root=$(root_of "$1") # Zed may have a subdir open
+  pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
+  "$HERDR" agent focus "$pane" >/dev/null
+  # Hyprland >= 0.56 takes Lua dispatchers; older takes the classic syntax
+  if command -v hyprctl >/dev/null; then
+    hyprctl dispatch "hl.dsp.focus({ window = \"class:$TERM_CLASS\" })" | grep -q '^ok' ||
+      hyprctl dispatch focuswindow "class:$TERM_CLASS" >/dev/null || true
+  fi
+  ;;
+mention)
+  # selection comes via env: Zed word-splits task args
+  root=$(root_of "$1") file=$2 row=$3 sel=${ZED_SELECTED_TEXT:-}
+  pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
+  ref="@${file#"$root"/}"
+  if [[ -n $sel ]]; then
+    sel=${sel%$'\n'} first=${sel%%$'\n'*}
+    n=$(printf '%s\n' "$sel" | wc -l)
+    # ZED_ROW is normally the selection start; fall back to it being the end
+    start=$row
+    for s in "$row" $((row - n + 1)) $((row - n)); do
+      ((s >= 1)) && [[ $(sed -n "${s}p" "$file") == *"$first"* ]] && { start=$s; break; }
+    done
+    ref+="#L$start-$((start + n - 1))"
+  fi
+  "$HERDR" pane send-text "$pane" "$ref " >/dev/null
+  "$0" focus "$root"
+  ;;
+bridge)
+  mkdir -p "$STATE"
+  # old bridge must release the port and remove its lockfile before the new one starts
+  if old=$(cat "$STATE/bridge.pid" 2>/dev/null) && grep -qs claude_zed_bridge "/proc/$old/cmdline" &&
+    kill "$old" 2>/dev/null; then
+    for _ in {1..50}; do kill -0 "$old" 2>/dev/null || break; sleep 0.1; done
+  fi
+  setsid "$HERE/bridge/claude_zed_bridge.py" >>"$STATE/bridge.log" 2>&1 </dev/null &
+  echo $! >"$STATE/bridge.pid"
+  ;;
+*)
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  exit 2
+  ;;
+esac
