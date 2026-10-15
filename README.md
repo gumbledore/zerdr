@@ -45,6 +45,17 @@ Then add the herdr keybindings that `install.sh` prints.
 Config (env): `ZED_BIN` (default `zeditor`), `ZH_TERMINAL_CLASS` (Hyprland class to raise;
 default `com.mitchellh.ghostty`), `ZH_MAX_COMMITS` (default 10).
 
+Add the following to local claude settings to allow writing to installed location if working with a development copy:
+
+```{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["~/.local/share/zerdr"]
+    }
+  }
+}
+```
+
 ## Known limits (prototype)
 
 - Zed's directory `--diff` mode was unreliable, so `review` opens one tab per file.
