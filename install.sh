@@ -18,21 +18,22 @@ done
 
 cat <<'MSG'
 
-Suggested herdr keybindings (~/.config/herdr/config.toml):
+Suggested herdr keybindings (~/.config/herdr/config.toml).
+prefix+z is zoom by default: move it first, e.g. zoom = "prefix+f".
   [[keys.command]]
-  key = "prefix+e"
+  key = "prefix+z"
   type = "plugin_action"
   command = "kmg.zed.open"
   description = "open project in Zed"
 
   [[keys.command]]
-  key = "prefix+shift+e"
+  key = "prefix+shift+z"
   type = "plugin_action"
   command = "kmg.zed.review"
   description = "review changes in Zed"
 
   [[keys.command]]
-  key = "prefix+ctrl+e"
+  key = "prefix+ctrl+z"
   type = "plugin_action"
   command = "kmg.zed.commits"
   description = "open agent commits in Zed"
