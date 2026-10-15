@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Link the herdr plugin, start the bridge, and install Zed tasks/keymap (never overwrites).
+# Link the herdr plugin and install Zed tasks/keymap (never overwrites).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 zed=${XDG_CONFIG_HOME:-$HOME/.config}/zed
 
 herdr plugin link "$here" >/dev/null && echo "linked herdr plugin kmg.zed"
-"$here/bin/zh" bridge && echo "started Claude Code -> Zed bridge"
 
+mkdir -p "$zed"
 for f in tasks keymap; do
   src=$(sed "s|@ZH@|$here/bin/zh|" "$here/zed/$f.json")
   if [[ -e $zed/$f.json ]]; then
@@ -37,6 +37,4 @@ prefix+z is zoom by default: move it first, e.g. zoom = "prefix+f".
   type = "plugin_action"
   command = "kmg.zed.commits"
   description = "open agent commits in Zed"
-
-Make Claude connect automatically: run `claude --ide`, or /config -> "Auto-connect to IDE".
 MSG

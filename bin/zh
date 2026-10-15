@@ -6,14 +6,12 @@
 #   zh done                         herdr event hook: notify with review buttons when an agent finishes
 #   zh focus  <root>                focus the herdr agent working in <root> (and raise the terminal)
 #   zh mention <root> <file> <row>  type an @file#Lx-y reference into that agent
-#   zh bridge                       (re)start the Claude Code -> Zed IDE bridge
 set -euo pipefail
 
 ZED=${ZED_BIN:-zeditor}
 HERDR=${HERDR_BIN_PATH:-herdr}
 TERM_CLASS=${ZH_TERMINAL_CLASS:-com.mitchellh.ghostty}
-HERE=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-STATE=${XDG_STATE_HOME:-$HOME/.local/state}/zed-herdr
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/zerdr
 
 root_of() { git -C "$1" rev-parse --show-toplevel 2>/dev/null || echo "$1"; }
 
@@ -74,7 +72,7 @@ review)
     git show "$rev:$f" >"$base/$f" 2>/dev/null || : >"$base/$f"
     args+=(--diff "$base/$f" "$root/$f")
   done < <(changed "$root" "$rev")
-  ((${#args[@]})) || { notify-send "zh" "No changes in $(basename "$root")" 2>/dev/null; exit 0; }
+  ((${#args[@]})) || { notify-send "zh" "No changes to show in $(basename "$root") (deletions only?)" 2>/dev/null; exit 0; }
   exec "$ZED" "${args[@]}" "$root"
   ;;
 commits)
@@ -135,30 +133,20 @@ mention)
   pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
   ref="@${file#"$root"/}"
   if [[ -n $sel ]]; then
-    sel=${sel%$'\n'} first=${sel%%$'\n'*}
+    sel=${sel%$'\n'}
     n=$(printf '%s\n' "$sel" | wc -l)
     # ZED_ROW is normally the selection start; fall back to it being the end
     start=$row
     for s in "$row" $((row - n + 1)) $((row - n)); do
-      ((s >= 1)) && [[ $(sed -n "${s}p" "$file") == *"$first"* ]] && { start=$s; break; }
+      ((s >= 1)) && [[ $(sed -n "${s},$((s + n - 1))p" "$file") == *"$sel"* ]] && { start=$s; break; }
     done
     ref+="#L$start-$((start + n - 1))"
   fi
   "$HERDR" pane send-text "$pane" "$ref " >/dev/null
   "$0" focus "$root"
   ;;
-bridge)
-  mkdir -p "$STATE"
-  # old bridge must release the port and remove its lockfile before the new one starts
-  if old=$(cat "$STATE/bridge.pid" 2>/dev/null) && grep -qs claude_zed_bridge "/proc/$old/cmdline" &&
-    kill "$old" 2>/dev/null; then
-    for _ in {1..50}; do kill -0 "$old" 2>/dev/null || break; sleep 0.1; done
-  fi
-  setsid "$HERE/bridge/claude_zed_bridge.py" >>"$STATE/bridge.log" 2>&1 </dev/null &
-  echo $! >"$STATE/bridge.pid"
-  ;;
 *)
-  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
   ;;
 esac
