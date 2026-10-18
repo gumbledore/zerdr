@@ -118,7 +118,7 @@ done)
   disown
   ;;
 focus)
-  root=$(root_of "$1") # Zed may have a subdir open
+  root=$(root_of "${ZED_WORKTREE_ROOT:-$1}") # Zed may have a subdir open
   pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
   "$HERDR" agent focus "$pane" >/dev/null
   # Hyprland >= 0.56 takes Lua dispatchers; older takes the classic syntax
@@ -128,8 +128,8 @@ focus)
   fi
   ;;
 mention)
-  # selection comes via env: Zed word-splits task args
-  root=$(root_of "$1") file=$2 row=$3 sel=${ZED_SELECTED_TEXT:-}
+  # prefer env: Zed word-splits task args, so paths with spaces break them
+  root=$(root_of "${ZED_WORKTREE_ROOT:-$1}") file=${ZED_FILE:-$2} row=${ZED_ROW:-$3} sel=${ZED_SELECTED_TEXT:-}
   pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
   ref="@${file#"$root"/}"
   if [[ -n $sel ]]; then
