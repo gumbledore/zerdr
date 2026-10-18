@@ -21,7 +21,6 @@ for the user-facing actions and known limits.
 - The live Zed keymap/tasks and herdr keys are stowed from `~/dotfiles`
   (`stow/zed`, `stow/herdr`). Editing `zed/*.json` here doesn't change the machine;
   mirror any change there.
-- The git remote is named `zerdr`, not `origin`.
 
 ## Conventions
 
