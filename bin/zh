@@ -131,7 +131,7 @@ mention)
   # prefer env: Zed word-splits task args, so paths with spaces break them
   root=$(root_of "${ZED_WORKTREE_ROOT:-$1}") file=${ZED_FILE:-$2} row=${ZED_ROW:-$3} sel=${ZED_SELECTED_TEXT:-}
   pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
-  ref="@${file#"$root"/}"
+  ref=${file#"$root"/}
   if [[ -n $sel ]]; then
     sel=${sel%$'\n'}
     n=$(printf '%s\n' "$sel" | wc -l)
@@ -142,7 +142,8 @@ mention)
     done
     ref+="#L$start-$((start + n - 1))"
   fi
-  "$HERDR" pane send-text "$pane" "$ref " >/dev/null
+  [[ $ref == *' '* ]] && ref="\"$ref\"" # Claude's @ parser stops at a space unless quoted
+  "$HERDR" pane send-text "$pane" "@$ref " >/dev/null
   "$0" focus "$root"
   ;;
 *)
