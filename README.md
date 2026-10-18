@@ -64,4 +64,5 @@ Add the following to local claude settings to allow writing to installed locatio
   only fires when the agent's work changed since the last one, so turns that only chat stay quiet.
 - Zed's own `git: branch diff` (same base, with staging) can't be triggered from outside;
   run it from the command palette once `review` has brought the window up.
-- Zed passes task args through a shell without quoting, so paths with spaces break the Zed tasks.
+- Zed passes task args through a shell without quoting, so `zh` reads paths from the `ZED_*`
+  env vars instead; the args are only a fallback for running it by hand.
