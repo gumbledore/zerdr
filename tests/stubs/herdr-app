@@ -1,0 +1,8 @@
+#!/bin/bash
+# Logs the call; `status` returns $STUB_DIR/status.json; `do terminal.paste` snapshots the clipboard.
+echo "herdr-app $*" >> "$STUB_LOG"
+case "$*" in
+  status) cat "$STUB_DIR/status.json" 2>/dev/null || echo '{}' ;;
+  "do terminal.paste") cp "$STUB_DIR/clipboard" "$STUB_DIR/pasted" ;;
+esac
+exit 0

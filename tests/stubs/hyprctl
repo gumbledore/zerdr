@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "hyprctl $*" >> "$STUB_LOG"
+echo ok

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Logs the call; `ls` returns the case's canned $STUB_DIR/ls.json.
+echo "hc $*" >> "$STUB_LOG"
+[[ ${1:-} == ls ]] && cat "$STUB_DIR/ls.json"
+exit 0

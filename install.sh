@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Link the herdr plugin and herdr-app mod; install Zed tasks/keymap (never overwrites).
+# Link the herdr-app mod; install Zed tasks/keymap (never overwrites).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 zed=${XDG_CONFIG_HOME:-$HOME/.config}/zed
-
-herdr plugin link "$here" >/dev/null && echo "linked herdr plugin kmg.zed"
 
 mkdir -p "$zed"
 for f in tasks keymap; do

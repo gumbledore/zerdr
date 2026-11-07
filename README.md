@@ -1,62 +1,61 @@
 # zerdr
 
-Run agents in herdr (in a real terminal), review their work in Zed as it lands, and have
-each agent's worktree map to the right Zed window automatically.
+Drive herdr-app agents from Zed: jump to the repo's agent, or paste a selection into it.
 
 ## Pieces
 
 | Piece | What it does |
 |---|---|
-| `herdr-plugin.toml` | herdr plugin `kmg.zed`: adds the actions below and the agent-done notification. |
-| `herdr-app/zerdr/` | herdr-app mod `zerdr` (linked into `~/.config/herdr-app/mods/` by `install.sh`): `zerdr.open` opens the pane's git root in Zed (remote panes get a toast); `zerdr.review` shows the right panel on Changes. It must sit in a layout block (see Install). |
-| `bin/zh` | Shared glue CLI used by the plugin and by Zed tasks. |
-| `zed/tasks.json`, `zed/keymap.json` | Zed → herdr: jump to the project's agent, or send it an `@file#Lx-y` reference. |
+| `bin/zh` | Glue CLI called by the Zed tasks. Backend is herdr-app / `hc` only. |
+| `herdr-app/zerdr/` | herdr-app mod `zerdr` (linked into `~/.config/herdr-app/mods/` by `install.sh`): `zerdr.open` opens the pane's git root in Zed, `zerdr.review` shows the Changes panel. It must sit in a layout block. |
+| `zed/tasks.json`, `zed/keymap.json` | Zed tasks "herdr: focus/send", "herdr: add to batch", "herdr: clear batch" and their keys. |
+| `tests/` | Stub-PATH tests: `bash tests/run.sh`. |
 
-## How matching works
-
-Everything keys off the **git toplevel** (`git rev-parse --show-toplevel`), which is
-worktree-aware:
-
-- **herdr pane → Zed window**: the focused pane's cwd goes to its toplevel, then `zeditor <root>`.
-- **Zed window → herdr agent**: `$ZED_WORKTREE_ROOT` goes to agents whose cwd has that same
-  toplevel. Ties go blocked > done > working > idle. Worktrees nested inside the main
-  checkout stay separate.
+The old herdr TUI plugin (`open`/`review`/`commits`/`done`, `herdr-plugin.toml`) is gone; see git history.
 
 ## Use
 
-| Where | Key (action) | Effect |
+| Where | Key | Effect |
 |---|---|---|
-| herdr | `prefix+z` (`kmg.zed.open`) | open/focus the pane's project in Zed |
-| herdr | `prefix+shift+z` (`kmg.zed.review`) | the agent's net work, committed + uncommitted: one editable diff tab per changed file, vs the branch's fork point from the default branch (`origin/HEAD`, else `main`/`master`), or vs HEAD when nothing is ahead of it |
-| herdr | `prefix+ctrl+z` (`kmg.zed.commits`) | each commit since the fork point (last 10) in Zed's native commit view |
-| herdr-app | `alt-z` (`zerdr.open`) | open the pane's git root (worktree-aware) in Zed |
-| herdr-app | `alt-shift-z` (`zerdr.review`) | show the Changes panel |
-| herdr | automatic, agent finishes | notification "Agent done: \<project\>" / "N file(s) changed, M commit(s)". Click it to run `review`; the *Commits* button (if your daemon shows buttons) runs `commits` |
-| Zed | `ctrl-space` | focus the project's herdr agent and raise the terminal |
-| Zed (editor) | `ctrl-shift-space` | type `@file#Lx-y` (current selection) into that agent's prompt, then focus it |
+| Zed | `ctrl-space` | `zh send`: nothing selected, focus the repo's agent and raise the herdr-app window |
+| Zed (editor) | `ctrl-space` with a selection | paste `@path#Lx-y` + the selection into the agent's input (no Enter), then focus it |
+| Zed (editor) | `ctrl-shift-space` | `zh add` (batch; not implemented yet) |
 
-The herdr keys are the ones `install.sh` suggests; `prefix+z` replaces herdr's default zoom.
+Pasted format (the code fence keeps multi-line selections intact):
+
+````
+@src/a.txt#L2-3
+```
+two
+three
+```
+````
+
+**Target agent**: local, live, status-reporting terminals from `hc ls --json` whose cwd's git
+root equals the Zed root (worktrees are their own root). The agent last focused in herdr-app
+wins if it is in that set, else blocked > done > working > idle. Remote agents are never targeted.
+A blocked agent gets no paste: it is focused and a notification says so. No agent: notification.
+
+**Paste without Enter**: `hc send` always presses Enter and `hc keys` cannot type arbitrary text,
+so `zh` copies the text with `wl-copy`, focuses the agent, runs `herdr-app do terminal.paste`
+and restores the clipboard.
+
+State: `~/.local/state/zerdr/batch/<sha1 of git root>.json` (batch items, used from `add`/batch submit).
 
 ## Install
 
 ```sh
-./install.sh   # links the plugin, writes Zed tasks/keymap if absent
+./install.sh   # writes Zed tasks/keymap if absent, links the herdr-app mod
 ```
 
-Then add the herdr keybindings that `install.sh` prints, and put the mod in your herdr-app
-layout so it can receive keys, e.g. a 1px block
-`{"type":"block","size":{"px":1},"content":{"mod":"zerdr"}}` (a `place: none` mod only runs
-where a layout puts it).
+Then add the herdr-app keys it prints and put the mod in a layout, e.g. a 1px block
+`{"type":"block","size":{"px":1},"content":{"mod":"zerdr"}}`.
 
-Config (env): `ZED_BIN` (default `zeditor`), `ZH_TERMINAL_CLASS` (Hyprland class to raise;
-default `com.mitchellh.ghostty`), `ZH_MAX_COMMITS` (default 10).
+Config (env): `ZH_TERMINAL_CLASS` (Hyprland class to raise; default `herdr-app`).
+Needs `hc`, `herdr-app`, `jq`, `wl-clipboard`, `hyprctl`, `notify-send`.
 
-## Known limits (prototype)
+## Known limits
 
-- Zed's directory `--diff` mode was unreliable, so `review` opens one tab per file.
-  For staging hunks, use Zed's own `git: diff` panel once the window is up.
-- herdr marks an agent `done` whenever it stops unwatched, which happens every turn. The notification
-  only fires when the agent's work changed since the last one, so turns that only chat stay quiet.
-- Zed's own `git: branch diff` (same base, with staging) can't be triggered from outside;
-  run it from the command palette once `review` has brought the window up.
-- Zed passes task args through a shell without quoting, so paths with spaces break the Zed tasks.
+- Zed passes task args through a shell without quoting, so paths with spaces break the tasks.
+- The one-off paste goes through the clipboard and the focused herdr-app terminal.
+- `hc ls` reports the terminal's launch folder, so an agent that `cd`s elsewhere matches its launch repo.

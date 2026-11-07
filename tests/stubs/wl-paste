@@ -1,0 +1,2 @@
+#!/bin/bash
+cat "$STUB_DIR/clipboard" 2>/dev/null

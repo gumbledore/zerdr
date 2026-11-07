@@ -1,152 +1,107 @@
 #!/usr/bin/env bash
-# zh — glue between herdr panes and Zed windows.
-#   zh open   [dir]                 open dir's project (git root) in its Zed window
-#   zh review [dir]                 diff tabs of the agent's work vs its base (see base_of)
-#   zh commits [dir]                Zed commit view for each commit since the base
-#   zh done                         herdr event hook: notify with review buttons when an agent finishes
-#   zh focus  <root>                focus the herdr agent working in <root> (and raise the terminal)
-#   zh mention <root> <file> <row>  type an @file#Lx-y reference into that agent
+# zh — glue between Zed and the herdr-app agents.
+#   zh send <root> <file> <row>   ctrl-space: focus the repo's agent, or paste the selection (no Enter)
+#   zh add <root> <file> <row>    add selection to the batch   (ticket 07)
+#   zh clear <root>               drop the batch               (ticket 07)
+# The selection arrives via ZED_SELECTED_TEXT (Zed word-splits task args).
 set -euo pipefail
 
-ZED=${ZED_BIN:-zeditor}
-HERDR=${HERDR_BIN_PATH:-herdr}
-TERM_CLASS=${ZH_TERMINAL_CLASS:-com.mitchellh.ghostty}
+TERM_CLASS=${ZH_TERMINAL_CLASS:-herdr-app}
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/zerdr
 
+notify() { notify-send "zh" "$1" 2>/dev/null || true; }
 root_of() { git -C "$1" rev-parse --show-toplevel 2>/dev/null || echo "$1"; }
 
-# cwd of the herdr pane that invoked us (plugin action / keybinding), else $PWD
-pane_cwd() {
-  local p=${HERDR_ACTIVE_PANE_ID:-${HERDR_PANE_ID:-}}
-  [[ -n ${HERDR_ACTIVE_PANE_CWD:-} ]] && { echo "$HERDR_ACTIVE_PANE_CWD"; return; }
-  [[ -n $p ]] && "$HERDR" pane get "$p" 2>/dev/null | jq -er '.result.pane.foreground_cwd // .result.pane.cwd' && return
-  echo "$PWD"
-}
+# batch file for a git root: one per root, items {path, lines, selection, note}
+batch_file() { echo "$STATE/batch/$(sha1sum <<<"$1" | cut -c1-16).json"; }
+batch_count() { local f; f=$(batch_file "$1"); [[ -s $f ]] && jq 'length' "$f" || echo 0; }
 
-# best agent pane for a project root: blocked > done > working > idle.
-# Same git root required, so worktrees nested inside the main checkout don't match it.
-agent_for() {
-  local list pane cwd
-  list=$("$HERDR" agent list | jq -r --arg r "$1" '
-    [.result.agents[] | (.cwd // "") as $c | select($c == $r or ($c | startswith($r + "/")))]
-    | sort_by({"blocked":0,"done":1,"working":2,"idle":3}[.agent_status] // 4)
-    | .[] | "\(.pane_id)\t\(.cwd)"')
-  while IFS=$'\t' read -r pane cwd; do
-    [[ -n $pane && $(root_of "$cwd") == "$1" ]] && { echo "$pane"; return 0; }
-  done <<<"$list"
-  return 1
-}
-
-# what the agent's work is measured against: on a feature branch, its fork point
-# from the default branch (committed + uncommitted work); otherwise HEAD (uncommitted only)
-base_of() {
-  local def mb
-  def=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null) ||
-    def=$(git -C "$1" rev-parse -q --verify main >/dev/null && echo main) ||
-    def=$(git -C "$1" rev-parse -q --verify master >/dev/null && echo master) || { echo HEAD; return; }
-  mb=$(git -C "$1" merge-base HEAD "$def" 2>/dev/null) && [[ $mb != $(git -C "$1" rev-parse HEAD) ]] &&
-    { echo "$mb"; return; }
-  echo HEAD
-}
-
-# NUL-separated files changed vs base, plus untracked
-changed() {
-  { git -C "$1" diff -z --name-only "$2" 2>/dev/null; git -C "$1" ls-files -z --others --exclude-standard; } | sort -zu
-}
-
-cmd=${1:-}; shift || true
-case $cmd in
-open)
-  root=$(root_of "${1:-$(pane_cwd)}")
-  cd "$root" && exec "$ZED" "$root"
-  ;;
-review)
-  root=$(root_of "${1:-$(pane_cwd)}")
-  cd "$root"
-  rev=$(base_of "$root")
-  base=$(mktemp -d "${TMPDIR:-/tmp}/zh-review.XXXX")/$(git rev-parse --short "$rev")
-  args=()
-  while IFS= read -r -d '' f; do
-    [[ -e $f ]] || continue # deletions: nothing to show on the right
-    mkdir -p "$base/$(dirname "$f")"
-    git show "$rev:$f" >"$base/$f" 2>/dev/null || : >"$base/$f"
-    args+=(--diff "$base/$f" "$root/$f")
-  done < <(changed "$root" "$rev")
-  ((${#args[@]})) || { notify-send "zh" "No changes to show in $(basename "$root") (deletions only?)" 2>/dev/null; exit 0; }
-  exec "$ZED" "${args[@]}" "$root"
-  ;;
-commits)
-  root=$(root_of "${1:-$(pane_cwd)}")
-  cd "$root"
-  rev=$(base_of "$root")
-  [[ $rev == HEAD ]] && range=(-1 HEAD) || range=("$rev..HEAD")
-  # Native Zed commit view. Raise the project's window first and space the URLs out:
-  # fired back to back, each URL can race the others and open its own window.
-  "$ZED" "$root"
-  sleep 1
-  git rev-list --reverse "${range[@]}" | tail -n "${ZH_MAX_COMMITS:-10}" | while read -r sha; do
-    "$ZED" "zed://git/commit/$sha?repo=$root"
-    sleep 0.4
+# Target agent terminal for a git root: the one last focused in herdr-app if it is among
+# the repo's local, live, status-reporting terminals, else blocked > done > working > idle.
+# Prints "<terminal> <status>"; fails when there is none.
+target_for() {
+  local cands cwd t s focused
+  cands=$(hc ls --json | jq -r '.terminals[]
+    | select((.address | contains("/") | not) and (.machine == null) and .state == "live" and .status != null)
+    | "\(.address)\t\(.status)\t\(.cwd // "")"')
+  focused=$(herdr-app status 2>/dev/null | jq -r '.agent // empty' 2>/dev/null || true)
+  local -a ids=() sts=()
+  while IFS=$'\t' read -r t s cwd; do
+    [[ -n $t && $(root_of "$cwd") == "$1" ]] || continue
+    ids+=("$t") sts+=("$s")
+  done <<<"$cands"
+  ((${#ids[@]})) || return 1
+  local i best=-1 bestrank=9 rank
+  for i in "${!ids[@]}"; do
+    [[ -n $focused && ${ids[i]} == "$focused" ]] && { echo "${ids[i]} ${sts[i]}"; return 0; }
+    case ${sts[i]} in blocked) rank=0 ;; done) rank=1 ;; working) rank=2 ;; idle) rank=3 ;; *) rank=4 ;; esac
+    ((rank < bestrank)) && { best=$i bestrank=$rank; }
   done
-  ;;
-done)
-  ev=${HERDR_PLUGIN_EVENT_JSON:-}
-  read -r pane status < <(jq -r '[.. | objects | select(has("agent_status"))][0] | "\(.pane_id) \(.agent_status)"' <<<"$ev")
-  [[ $status == done && -n $pane ]] || exit 0
-  cwd=$("$HERDR" pane get "$pane" | jq -er '.result.pane.foreground_cwd // .result.pane.cwd') || exit 0
-  root=$(root_of "$cwd")
-  git -C "$root" rev-parse -q --git-dir >/dev/null || exit 0
-  rev=$(base_of "$root")
-  files=$(changed "$root" "$rev" | tr -cd '\0' | wc -c)
-  commits=0; [[ $rev != HEAD ]] && commits=$(git -C "$root" rev-list --count "$rev..HEAD")
-  ((files + commits)) || exit 0
-  # herdr reports "done" whenever the agent stops unwatched, i.e. every turn.
-  # Only notify when the work itself changed since the last notification for this project.
-  fp=$(cd "$root" && { git diff "$rev"; git ls-files -z --others --exclude-standard | xargs -0r sha1sum; } | sha1sum)
-  seen="$STATE/done/$(sha1sum <<<"$root" | cut -c1-16)"
-  [[ $(cat "$seen" 2>/dev/null) == "$fp" ]] && exit 0
-  mkdir -p "$STATE/done" && echo "$fp" >"$seen"
-  btn=(-A default="Review changes") # default = click on the body, for daemons without buttons
-  ((commits)) && btn+=(-A commits=Commits)
-  # detach: notify-send -A blocks until clicked, event hooks should return
-  (
-    act=$(notify-send -a herdr "${btn[@]}" \
-      "Agent done: $(basename "$root")" "$files file(s) changed, $commits commit(s)") || exit 0
-    [[ $act == default ]] && act=review
-    [[ -n $act ]] && exec "$0" "$act" "$root"
-  ) </dev/null >/dev/null 2>&1 &
-  disown
-  ;;
-focus)
-  root=$(root_of "$1") # Zed may have a subdir open
-  pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
-  "$HERDR" agent focus "$pane" >/dev/null
+  echo "${ids[best]} ${sts[best]}"
+}
+
+# focus an agent and raise the herdr-app window
+focus() {
+  herdr-app do agent.focus --terminal "$1" >/dev/null
   # Hyprland >= 0.56 takes Lua dispatchers; older takes the classic syntax
   if command -v hyprctl >/dev/null; then
     hyprctl dispatch "hl.dsp.focus({ window = \"class:$TERM_CLASS\" })" | grep -q '^ok' ||
       hyprctl dispatch focuswindow "class:$TERM_CLASS" >/dev/null || true
   fi
-  ;;
-mention)
-  # selection comes via env: Zed word-splits task args
+}
+
+# paste text into the focused terminal without Enter. hc send always presses Enter and
+# hc keys cannot type arbitrary text, so go through the clipboard (restored afterwards).
+paste_focused() {
+  local old had=0
+  old=$(wl-paste 2>/dev/null) && had=1
+  printf '%s' "$1" | wl-copy
+  herdr-app do terminal.paste >/dev/null
+  sleep 0.2 # let herdr-app read the clipboard before we restore it
+  ((had)) && printf '%s' "$old" | wl-copy
+  return 0
+}
+
+# "@path#Lx-y" for the selection (ZED_ROW is normally its start; tolerate it being the end)
+mention_ref() {
+  local root=$1 file=$2 row=$3 sel=$4 n start s ref="@${2#"$1"/}"
+  n=$(printf '%s\n' "$sel" | wc -l)
+  start=$row
+  for s in "$row" $((row - n + 1)) $((row - n)); do
+    ((s >= 1)) && [[ $(sed -n "${s},$((s + n - 1))p" "$file") == *"$sel"* ]] && { start=$s; break; }
+  done
+  ((n > 1)) && echo "$ref#L$start-$((start + n - 1))" || echo "$ref#L$start"
+}
+
+# send_batch <root> <terminal> <selection>: rows 3-4 of the truth table (ticket 07)
+send_batch() { notify "batch submit not implemented"; return 1; }
+
+cmd=${1:-}; shift || true
+case $cmd in
+send)
   root=$(root_of "$1") file=$2 row=$3 sel=${ZED_SELECTED_TEXT:-}
-  pane=$(agent_for "$root") || { notify-send "zh" "No herdr agent in $root" 2>/dev/null; exit 1; }
-  ref="@${file#"$root"/}"
-  if [[ -n $sel ]]; then
-    sel=${sel%$'\n'}
-    n=$(printf '%s\n' "$sel" | wc -l)
-    # ZED_ROW is normally the selection start; fall back to it being the end
-    start=$row
-    for s in "$row" $((row - n + 1)) $((row - n)); do
-      ((s >= 1)) && [[ $(sed -n "${s},$((s + n - 1))p" "$file") == *"$sel"* ]] && { start=$s; break; }
-    done
-    ref+="#L$start-$((start + n - 1))"
+  sel=${sel%$'\n'}
+  tgt=$(target_for "$root") || { notify "No herdr agent in $root"; exit 1; }
+  read -r term status <<<"$tgt"
+  if ((  $(batch_count "$root") > 0 )); then
+    send_batch "$root" "$term" "$sel" || exit 1
+  elif [[ -n $sel ]]; then
+    focus "$term"
+    if [[ $status == blocked ]]; then
+      notify "Agent $term is blocked; selection not sent"
+    else
+      paste_focused "$(mention_ref "$root" "$file" "$row" "$sel")"$'\n```\n'"$sel"$'\n```\n'
+    fi
+    exit 0
   fi
-  "$HERDR" pane send-text "$pane" "$ref " >/dev/null
-  "$0" focus "$root"
+  focus "$term"
+  ;;
+add | clear)
+  notify "zh $cmd not implemented"
+  exit 1
   ;;
 *)
-  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
   ;;
 esac

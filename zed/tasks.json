@@ -1,16 +1,24 @@
 [
   {
-    "label": "herdr: focus agent",
+    "label": "herdr: focus/send",
     "command": "@ZH@",
-    "args": ["focus", "$ZED_WORKTREE_ROOT"],
+    "args": ["send", "$ZED_WORKTREE_ROOT", "$ZED_FILE", "$ZED_ROW"],
     "reveal": "never",
     "hide": "always",
     "allow_concurrent_runs": true
   },
   {
-    "label": "herdr: send file/selection to agent",
+    "label": "herdr: add to batch",
     "command": "@ZH@",
-    "args": ["mention", "$ZED_WORKTREE_ROOT", "$ZED_FILE", "$ZED_ROW"],
+    "args": ["add", "$ZED_WORKTREE_ROOT", "$ZED_FILE", "$ZED_ROW"],
+    "reveal": "never",
+    "hide": "always",
+    "allow_concurrent_runs": true
+  },
+  {
+    "label": "herdr: clear batch",
+    "command": "@ZH@",
+    "args": ["clear", "$ZED_WORKTREE_ROOT"],
     "reveal": "never",
     "hide": "always",
     "allow_concurrent_runs": true
