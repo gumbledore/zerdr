@@ -1,3 +1,5 @@
 .scratch/
 .claude/
 __pycache__/
+herdr-app/*/*.d.ts
+herdr-app/*/jsconfig.json
