@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # zh — glue between Zed and the herdr-app agents.
-#   zh send <root> <file> <row>   ctrl-space: focus the repo's agent, or paste the selection (no Enter)
-#   zh add <root> <file> <row>    ctrl-shift-space: queue selection (or cursor line) + one-line note
-#   zh clear <root>               drop the repo's batch
+#   zh send [root]   ctrl-space: focus the repo's agent, or paste the selection (no Enter)
+#   zh add [root]    ctrl-shift-space: queue selection (or cursor line) + one-line note
+#   zh clear [root]  drop the repo's batch
 # With a batch, send submits it (after prompting a note for any selection).
-# The selection arrives via ZED_SELECTED_TEXT (Zed word-splits task args).
+# Zed task env supplies ZED_FILE, ZED_ROW, ZED_SELECTED_TEXT, ZED_WORKTREE_ROOT; positional
+# args (root, file, row) are only a fallback. Mutating commands hold a lock on the batch dir.
 set -euo pipefail
 
 TERM_CLASS=${ZH_TERMINAL_CLASS:-herdr-app}
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/zerdr
 
 notify() { notify-send "zh" "$1" 2>/dev/null || true; }
-root_of() { git -C "$1" rev-parse --show-toplevel 2>/dev/null || echo "$1"; }
+root_of() { [[ -n ${1:-} ]] || return 1; git -C "$1" rev-parse --show-toplevel 2>/dev/null || echo "$1"; }
+lock() { mkdir -p "$STATE/batch" && exec 9>"$STATE/batch/.lock" && flock 9; }
 
 # batch file for a git root: one per root, items {path, lines, selection, note}
 batch_file() { echo "$STATE/batch/$(sha1sum <<<"$1" | cut -c1-16).json"; }
@@ -28,7 +30,10 @@ target_for() {
   focused=$(herdr-app status 2>/dev/null | jq -r '.agent // empty' 2>/dev/null || true)
   local -a ids=() sts=()
   while IFS=$'\t' read -r t s cwd; do
-    [[ -n $t && $(root_of "$cwd") == "$1" ]] || continue
+    [[ -n $t ]] || continue
+    # ls reports the launch folder; the current one is foreground.cwd of `hc get`
+    cwd=$(hc get "$t" --json 2>/dev/null | jq -r --arg d "$cwd" '.foreground.cwd // .cwd // $d' 2>/dev/null) || cwd=""
+    [[ $(root_of "$cwd") == "$1" ]] || continue
     ids+=("$t") sts+=("$s")
   done <<<"$cands"
   ((${#ids[@]})) || return 1
@@ -41,9 +46,9 @@ target_for() {
   echo "${ids[best]} ${sts[best]}"
 }
 
-# focus an agent and raise the herdr-app window
+# focus an agent and raise the herdr-app window; fails if the agent cannot be focused
 focus() {
-  herdr-app do agent.focus --terminal "$1" >/dev/null
+  herdr-app do agent.focus --terminal "$1" >/dev/null || return 1
   # Hyprland >= 0.56 takes Lua dispatchers; older takes the classic syntax
   if command -v hyprctl >/dev/null; then
     hyprctl dispatch "hl.dsp.focus({ window = \"class:$TERM_CLASS\" })" | grep -q '^ok' ||
@@ -51,21 +56,26 @@ focus() {
   fi
 }
 
-# paste text into the focused terminal without Enter. hc send always presses Enter and
-# hc keys cannot type arbitrary text, so go through the clipboard (restored afterwards).
+# paste text into the focused terminal without Enter (hc send always presses Enter and
+# hc keys cannot type arbitrary text), via the clipboard, which is restored afterwards.
 paste_focused() {
-  local old had=0
-  old=$(wl-paste 2>/dev/null) && had=1
-  printf '%s' "$1" | wl-copy
-  herdr-app do terminal.paste >/dev/null
-  sleep 0.2 # let herdr-app read the clipboard before we restore it
-  ((had)) && printf '%s' "$old" | wl-copy
-  return 0
+  local tmp type rc=0
+  tmp=$(mktemp) || return 1
+  type=$(wl-paste --list-types 2>/dev/null | head -n1) || type=""
+  if [[ -n $type ]]; then wl-paste -t "$type" >"$tmp" 2>/dev/null || type=""; fi
+  printf '%s' "$1" | wl-copy || rc=1
+  ((rc)) || herdr-app do terminal.paste >/dev/null || rc=1
+  sleep 0.3 # let herdr-app read the clipboard before we restore it
+  if [[ -n $type ]]; then wl-copy -t "$type" <"$tmp"; else wl-copy --clear; fi
+  rm -f "$tmp"
+  return $rc
 }
 
 # "@path#Lx-y" for the selection (ZED_ROW is normally its start; tolerate it being the end)
 mention_ref() {
-  local root=$1 file=$2 row=$3 sel=$4 n start s ref="@${2#"$1"/}"
+  local root=$1 file=$2 row=$3 sel=$4 n start s ref
+  if [[ $file != "$root"/* ]]; then file=$(realpath "$file") root=$(realpath "$root"); fi
+  ref="@${file#"$root"/}"
   n=$(printf '%s\n' "$sel" | wc -l)
   start=$row
   for s in "$row" $((row - n + 1)) $((row - n)); do
@@ -74,16 +84,19 @@ mention_ref() {
   ((n > 1)) && echo "$ref#L$start-$((start + n - 1))" || echo "$ref#L$start"
 }
 
-# add_item <root> <file> <row> <selection>: prompt a one-line note (Esc = none) and queue it
+# ask_note: prompt a one-line note (Esc = none)
+ask_note() { local n; n=$(omarchy-menu-input "Review note (Esc = none)" 2>/dev/null) || n=""; printf '%s' "${n%%$'\n'*}"; }
+
+# add_item <root> <file> <row> <selection> <note>: queue an item (caller holds the lock)
 add_item() {
-  local root=$1 ref note f
+  local root=$1 ref f tmp
   ref=$(mention_ref "$1" "$2" "$3" "$4") ref=${ref#@}
-  note=$(omarchy-menu-input "Review note (Esc = none)" 2>/dev/null) || note=""
   f=$(batch_file "$root")
   mkdir -p "$(dirname "$f")"
   [[ -s $f ]] || echo '[]' >"$f"
-  jq --arg p "${ref%%#*}" --arg l "${ref##*#}" --arg s "$4" --arg n "${note%%$'\n'*}" \
-    '. + [{path: $p, lines: $l, selection: $s, note: $n}]' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+  tmp=$(mktemp "$f.XXXXXX")
+  jq --arg p "${ref%%#*}" --arg l "${ref##*#}" --arg s "$4" --arg n "$5" \
+    '. + [{path: $p, lines: $l, selection: $s, note: $n}]' "$f" >"$tmp" && mv "$tmp" "$f" || { rm -f "$tmp"; return 1; }
 }
 
 # batch_message <root>: the text submitted to the agent (selections trimmed to 20 lines)
@@ -93,51 +106,69 @@ batch_message() {
       + (if .value.note != "" then "\n\(.value.note)" else "" end)) | join("\n\n"))' "$(batch_file "$1")"
 }
 
-# send_batch <root> <terminal> <status> <selection>: rows 3-4 of the truth table
-send_batch() {
-  local root=$1 term=$2 status=$3 sel=$4 f
-  if [[ $status == blocked ]]; then
-    focus "$term"
-    notify "Agent $term is blocked; batch kept"
+# submit_batch <root> <terminal>: focus, then hc send (paste + Enter by id; never --force).
+# The batch is cleared only when hc send succeeds. Caller holds the lock.
+submit_batch() {
+  local root=$1 term=$2
+  focus "$term" || { notify "Could not focus $term; batch kept"; return 1; }
+  if hc send "$term" "$(batch_message "$root")" >/dev/null; then
+    rm -f "$(batch_file "$root")"
+  else
+    notify "Send to $term failed; batch kept"
     return 1
   fi
-  [[ -n $sel ]] && add_item "$root" "$file" "$row" "$sel"
-  focus "$term"
-  # like hc send, pause between paste and Enter so the agent sees one paste, then submit
-  paste_focused "$(batch_message "$root")" && sleep "${ZH_PASTE_GAP:-0.5}" && hc keys "$term" enter >/dev/null && rm -f "$(batch_file "$root")"
+}
+
+# Zed task env (positional args are only a fallback): sets root file row sel
+zed_ctx() {
+  file=${ZED_FILE:-${2:-}} row=${ZED_ROW:-${3:-}} sel=${ZED_SELECTED_TEXT:-}
+  root=${ZED_WORKTREE_ROOT:-${1:-}}
+  if [[ -n $file ]]; then root=$(root_of "$(dirname "$file")") || root=""
+  else root=$(root_of "$root") || root=""; sel=""; fi
+  sel=${sel%$'\n'}
+  [[ -n $root ]] || { notify "No project root"; exit 1; }
 }
 
 cmd=${1:-}; shift || true
 case $cmd in
 send)
-  root=$(root_of "$1") file=$2 row=$3 sel=${ZED_SELECTED_TEXT:-}
-  sel=${sel%$'\n'}
+  zed_ctx "$@"
   tgt=$(target_for "$root") || { notify "No herdr agent in $root"; exit 1; }
   read -r term status <<<"$tgt"
-  if ((  $(batch_count "$root") > 0 )); then
-    send_batch "$root" "$term" "$status" "$sel" || exit 1
-    exit 0
-  elif [[ -n $sel ]]; then
-    focus "$term"
+  if ((  $(batch_count "$root") > 0 )) || [[ -n $sel ]]; then
     if [[ $status == blocked ]]; then
-      notify "Agent $term is blocked; selection not sent"
-    else
-      paste_focused "$(mention_ref "$root" "$file" "$row" "$sel")"$'\n```\n'"$sel"$'\n```\n'
+      focus "$term" || true
+      notify "Agent $term is blocked; nothing sent"
+      exit 1
     fi
-    exit 0
   fi
-  focus "$term"
+  if ((  $(batch_count "$root") > 0 )); then
+    note=""
+    [[ -z $sel ]] || note=$(ask_note)
+    lock
+    [[ -z $sel ]] || add_item "$root" "$file" "$row" "$sel" "$note"
+    if ((  $(batch_count "$root") > 0 )); then submit_batch "$root" "$term" || exit 1; else focus "$term"; fi
+  elif [[ -n $sel ]]; then
+    focus "$term" || { notify "Could not focus $term; selection not sent"; exit 1; }
+    paste_focused "$(mention_ref "$root" "$file" "$row" "$sel")"$'\n```\n'"$sel"$'\n```\n' || { notify "Paste failed"; exit 1; }
+  else
+    focus "$term"
+  fi
   ;;
 add)
-  root=$(root_of "$1") file=$2 row=$3 sel=${ZED_SELECTED_TEXT:-}
-  sel=${sel%$'\n'}
+  zed_ctx "$@"
+  [[ -n $file && -n $row ]] || { notify "No file open; nothing to queue"; exit 1; }
   [[ -n $sel ]] || sel=$(sed -n "${row}p" "$file")
-  add_item "$root" "$file" "$row" "$sel"
+  note=$(ask_note)
+  lock
+  add_item "$root" "$file" "$row" "$sel" "$note"
   n=$(batch_count "$root")
   notify "$n comment$( ((n == 1)) || echo s) queued for $(basename "$root")"
   ;;
 clear)
-  rm -f "$(batch_file "$(root_of "$1")")"
+  root=$(root_of "${ZED_WORKTREE_ROOT:-${1:-}}") || { notify "No project root"; exit 1; }
+  lock
+  rm -f "$(batch_file "$root")"
   notify "Batch cleared"
   ;;
 *)

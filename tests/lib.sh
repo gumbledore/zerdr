@@ -33,7 +33,8 @@ setup_case() {
   printf 'one\ntwo\nthree\nfour\n' > "$REPO/src/a.txt"
   git init -q "$REPO" && git -C "$REPO" add -A && git -C "$REPO" commit -qm init
   git -C "$REPO" worktree add -q "$WT" -b wt
-  unset ZED_SELECTED_TEXT
+  unset ZED_SELECTED_TEXT ZED_FILE ZED_ROW ZED_WORKTREE_ROOT
+  mkdir -p "$STUB_DIR/fg"
   set_agents
   set_focused ''
 }
@@ -45,14 +46,23 @@ set_focused() { printf '{"agent":"%s"}\n' "$1" > "$STUB_DIR/status.json"; }
 # agent <addr> <cwd> <status>: one local agent terminal.
 agent() { printf '{"address":"%s","agent":"claude-code","cwd":"%s","state":"live","status":"%s"}' "$1" "$2" "$3"; }
 
-# run_send <root> <file> <row>: invoke bin/zh as the Zed task does (selection in env).
-run_send() { "$ROOT/bin/zh" send "$@" >/dev/null 2>&1; }
+# set_fg <terminal> <cwd>: the terminal's current folder (hc get .foreground.cwd), unlike its launch cwd.
+set_fg() { printf '%s' "$2" > "$STUB_DIR/fg/$1"; }
+# zed <cmd> <root> <file> <row>: invoke bin/zh as a Zed task does: only the root as an arg,
+# the rest in ZED_* env (empty file = no active editor). ZED_SELECTED_TEXT is passed through.
+zed() {
+  local cmd=$1 root=$2 file=$3 row=$4; shift 4
+  if [[ -n $file ]]; then ZED_FILE=$file ZED_ROW=$row ZED_WORKTREE_ROOT=$root "$ROOT/bin/zh" "$cmd" "$root" >/dev/null 2>&1
+  else env -u ZED_FILE -u ZED_ROW ZED_WORKTREE_ROOT=$root "$ROOT/bin/zh" "$cmd" "$root" >/dev/null 2>&1; fi
+}
+run_send() { zed send "$@"; }
 log() { cat "$STUB_LOG"; }
 pasted() { cat "$STUB_DIR/pasted" 2>/dev/null; }
+sent() { cat "$STUB_DIR/sent" 2>/dev/null; }
 
 # run_add / run_clear: invoke bin/zh as the Zed tasks do.
-run_add() { "$ROOT/bin/zh" add "$@" >/dev/null 2>&1; }
-run_clear() { "$ROOT/bin/zh" clear "$@" >/dev/null 2>&1; }
+run_add() { zed add "$@"; }
+run_clear() { ZED_WORKTREE_ROOT=$1 "$ROOT/bin/zh" clear "$1" >/dev/null 2>&1; }
 # set_note <text>: what the note prompt returns (never called = Esc).
 set_note() { printf '%s\n' "$1" > "$STUB_DIR/note"; }
 # batch_json <root>: the batch file contents ([] when none).

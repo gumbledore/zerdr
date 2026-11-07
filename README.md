@@ -42,7 +42,9 @@ four
 ````
 
 A blocked agent keeps the batch (focus + notification). A working agent receives it (it queues).
-The batch is cleared only after a successful submit, so it is never sent twice.
+The batch is submitted with `hc send <terminal>` (paste + Enter by id, never `--force`) and cleared
+only when that succeeds; a failed focus or send keeps it. `add`, `clear` and batch submit run under
+`flock` on `~/.local/state/zerdr/batch/.lock`, so quick repeated presses cannot double-submit or lose items.
 
 
 Pasted format (the code fence keeps multi-line selections intact):
@@ -56,13 +58,15 @@ three
 ````
 
 **Target agent**: local, live, status-reporting terminals from `hc ls --json` whose cwd's git
-root equals the Zed root (worktrees are their own root). The agent last focused in herdr-app
+root equals the root of the active file's directory (worktrees are their own root, even nested ones).
+The current folder is `foreground.cwd` from `hc get <t> --json` (falling back to `cwd`). The agent last focused in herdr-app
 wins if it is in that set, else blocked > done > working > idle. Remote agents are never targeted.
 A blocked agent gets no paste: it is focused and a notification says so. No agent: notification.
 
 **Paste without Enter**: `hc send` always presses Enter and `hc keys` cannot type arbitrary text,
-so `zh` copies the text with `wl-copy`, focuses the agent, runs `herdr-app do terminal.paste`
-and restores the clipboard.
+so the one-off paste focuses the agent, copies the text with `wl-copy`, runs
+`herdr-app do terminal.paste` and restores the clipboard (with its MIME type; an empty one is cleared).
+A failed focus or paste is reported by notification.
 
 State: `~/.local/state/zerdr/batch/<sha1 of git root>.json` (items `{path, lines, selection, note}`).
 
@@ -80,6 +84,6 @@ Needs `hc`, `herdr-app`, `jq`, `wl-clipboard`, `hyprctl`, `notify-send`, `omarch
 
 ## Known limits
 
-- Zed passes task args through a shell without quoting, so paths with spaces break the tasks.
+- The tasks pass only `$ZED_WORKTREE_ROOT`; `zh` reads `ZED_FILE`, `ZED_ROW`, `ZED_SELECTED_TEXT` from the task env
+  (positional `root file row` still work as a fallback). With no active editor, selection paths just focus/submit and `add` notifies and exits.
 - The one-off paste goes through the clipboard and the focused herdr-app terminal.
-- `hc ls` reports the terminal's launch folder, so an agent that `cd`s elsewhere matches its launch repo.

@@ -1,5 +1,15 @@
 #!/bin/bash
-# Logs the call; `ls` returns the case's canned $STUB_DIR/ls.json.
+# Logs the call. `ls` returns $STUB_DIR/ls.json; `get <t> --json` returns {cwd, foreground.cwd}
+# from ls.json and $STUB_DIR/fg/<t>; `send <t> <msg>` records the message (fails if $STUB_DIR/fail_send).
 echo "hc $*" >> "$STUB_LOG"
-[[ ${1:-} == ls ]] && cat "$STUB_DIR/ls.json"
+case ${1:-} in
+  ls) cat "$STUB_DIR/ls.json" ;;
+  get)
+    fg=$(cat "$STUB_DIR/fg/$2" 2>/dev/null)
+    jq -c --arg t "$2" --arg fg "$fg" '.terminals[] | select(.address == $t)
+      | if $fg != "" then . + {foreground: {cwd: $fg}} else . end' "$STUB_DIR/ls.json" ;;
+  send)
+    [[ -f $STUB_DIR/fail_send ]] && exit 1
+    printf '%s' "$3" > "$STUB_DIR/sent" ;;
+esac
 exit 0

@@ -1,3 +1,6 @@
 #!/bin/bash
-echo "wl-copy" >> "$STUB_LOG"
+# --clear empties the clipboard; otherwise stdin becomes it (-t <type> accepted).
+echo "wl-copy $*" >> "$STUB_LOG"
+if [[ ${1:-} == --clear ]]; then rm -f "$STUB_DIR/clipboard"; exit 0; fi
+[[ ${1:-} == -t ]] && echo "$2" > "$STUB_DIR/cliptype"
 cat > "$STUB_DIR/clipboard"

@@ -13,6 +13,7 @@ assert_contains "$out" "$FOCUS t3" "focus t3"
 assert_not_contains "$out" "$FOCUS t4" "other repo untouched"
 assert_contains "$out" "hyprctl dispatch hl.dsp.focus({ window = \"class:herdr-app\" })" "window raised"
 assert_not_contains "$out" "hc send" "no send"
+assert_not_contains "$out" "hc keys" "no Enter"
 assert_not_contains "$out" "terminal.paste" "no paste"
 
 echo "row 2: selection pastes @path#L plus selection, no Enter, then focuses"
@@ -22,7 +23,7 @@ ZED_SELECTED_TEXT=$'two\nthree' run_send "$REPO" "$REPO/src/a.txt" 2
 out=$(log)
 assert_contains "$out" "$FOCUS t3" "focus"
 assert_contains "$out" "do terminal.paste" "pasted"
-assert_not_contains "$out" "hc send" "never hc send (it presses Enter)"
+assert_not_contains "$out" "hc send" "one-off paste never submits"
 assert_not_contains "$out" "hc keys" "never presses keys (no Enter)"
 assert_eq $'@src/a.txt#L2-3\n```\ntwo\nthree\n```' "$(pasted)" "paste text"
 # focus must precede paste so the paste lands in the agent
@@ -169,16 +170,15 @@ ZED_SELECTED_TEXT=four run_add "$REPO" "$REPO/src/a.txt" 4
 : > "$STUB_LOG"
 run_send "$REPO" "$REPO/src/a.txt" 1
 out=$(log)
-assert_eq $'Review comments:\n\n1. @src/a.txt#L2-3\n```\ntwo\nthree\n```\nfirst\n\n2. @src/a.txt#L4\n```\nfour\n```\nsecond\n' "$(pasted)"$'\n' "message"
-assert_eq 1 "$(grep -c '^hc keys t3 enter' <<<"$out")" "Enter once"
-assert_not_contains "$out" "hc send" "no hc send"
+assert_eq $'Review comments:\n\n1. @src/a.txt#L2-3\n```\ntwo\nthree\n```\nfirst\n\n2. @src/a.txt#L4\n```\nfour\n```\nsecond' "$(sent)" "message"
+assert_eq 1 "$(grep -c '^hc send t3 ' <<<"$out")" "submitted once by id"
+assert_not_contains "$out" "--force" "never forced"
+assert_not_contains "$out" "terminal.paste" "no clipboard paste"
 assert_contains "$out" "$FOCUS t3" "focused"
 assert_eq '[]' "$(batch_json | jq -c .)" "batch cleared"
-f=$(grep -n 'agent.focus' <<<"$out" | head -1 | cut -d: -f1); p=$(grep -n 'terminal.paste' <<<"$out" | head -1 | cut -d: -f1); k=$(grep -n 'hc keys' <<<"$out" | head -1 | cut -d: -f1)
-if ((f < p && p < k)); then pass; else fail "order focus < paste < Enter"; fi
 : > "$STUB_LOG"
 run_send "$REPO" "$REPO/src/a.txt" 1
-assert_not_contains "$(log)" "hc keys" "no double send"
+assert_not_contains "$(log)" "hc send" "no double send"
 
 echo "row 4: batch + selection prompts for a note, appends, submits all"
 setup_case sub4
@@ -188,15 +188,15 @@ set_note "now this"
 : > "$STUB_LOG"
 ZED_SELECTED_TEXT=three run_send "$REPO" "$REPO/src/a.txt" 3
 assert_contains "$(log)" "omarchy-menu-input" "prompted"
-assert_contains "$(pasted)" "1. @src/a.txt#L1"$'\n```\none\n```\n\n2. @src/a.txt#L3'$'\n```\nthree\n```\nnow this' "both items"
-assert_eq 1 "$(grep -c '^hc keys' "$STUB_LOG")" "Enter once"
+assert_contains "$(sent)" "1. @src/a.txt#L1"$'\n```\none\n```\n\n2. @src/a.txt#L3'$'\n```\nthree\n```\nnow this' "both items"
+assert_eq 1 "$(grep -c '^hc send' "$STUB_LOG")" "submitted once"
 assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
 echo "row 4: Esc on the note still appends and submits"
 setup_case sub4b
 set_agents "$(agent t3 "$REPO" idle)"
 run_add "$REPO" "$REPO/src/a.txt" 1
 ZED_SELECTED_TEXT=three run_send "$REPO" "$REPO/src/a.txt" 3
-assert_contains "$(pasted)" "2. @src/a.txt#L3"$'\n```\nthree\n```' "appended without note"
+assert_contains "$(sent)" "2. @src/a.txt#L3"$'\n```\nthree\n```' "appended without note"
 assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
 
 echo "message: long selections are trimmed to 20 lines"
@@ -205,9 +205,9 @@ set_agents "$(agent t3 "$REPO" idle)"
 seq 1 30 > "$REPO/src/long.txt"
 ZED_SELECTED_TEXT="$(seq 1 30)" run_add "$REPO" "$REPO/src/long.txt" 1
 run_send "$REPO" "$REPO/src/long.txt" 1
-assert_contains "$(pasted)" "@src/long.txt#L1-30" "full range in header"
-assert_contains "$(pasted)" $'\n20\n...\n```' "trimmed with marker"
-assert_not_contains "$(pasted)" $'\n21\n' "line 21 dropped"
+assert_contains "$(sent)" "@src/long.txt#L1-30" "full range in header"
+assert_contains "$(sent)" $'\n20\n...\n```' "trimmed with marker"
+assert_not_contains "$(sent)" $'\n21\n' "line 21 dropped"
 
 echo "blocked agent: batch kept, nothing sent, focused, notified"
 setup_case blockedbatch
@@ -220,7 +220,7 @@ assert_eq 1 "$(batch_json | jq length)" "batch kept, selection not appended"
 assert_contains "$out" "$FOCUS t3" "focused"
 assert_contains "$out" "notify-send" "notified"
 assert_not_contains "$out" "terminal.paste" "no paste"
-assert_not_contains "$out" "hc keys" "no Enter"
+assert_not_contains "$out" "hc send" "no submit"
 assert_not_contains "$out" "omarchy-menu-input" "no prompt"
 
 echo "working agent: batch delivered"
@@ -228,7 +228,7 @@ setup_case sub-working
 set_agents "$(agent t3 "$REPO" working)"
 run_add "$REPO" "$REPO/src/a.txt" 1
 run_send "$REPO" "$REPO/src/a.txt" 1
-assert_contains "$(pasted)" "Review comments:" "delivered"
+assert_contains "$(sent)" "Review comments:" "delivered"
 assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
 
 echo "no agent: batch kept"
@@ -237,10 +237,109 @@ run_add "$REPO" "$REPO/src/a.txt" 1
 run_send "$REPO" "$REPO/src/a.txt" 1
 assert_eq 1 "$(batch_json | jq length)" "kept"
 
-echo "never hc send; Enter only from batch submits"
+echo "one-off and focus-only cases never submit"
 for l in "$TMP"/*/stub/log; do
+  case $(basename "$(dirname "$(dirname "$l")")") in sub*|conc*|fail*) continue ;; esac
   assert_not_contains "$(cat "$l")" "hc send" "no hc send ($l)"
-  [[ $(basename "$(dirname "$(dirname "$l")")") == sub* ]] || assert_not_contains "$(cat "$l")" "hc keys" "no Enter outside batch submit ($l)"
+  assert_not_contains "$(cat "$l")" "hc keys" "no Enter ($l)"
 done
+
+echo "agent cwd: foreground.cwd decides, not the launch cwd"
+setup_case fg
+set_agents "$(agent t3 "$HOME" idle)" "$(agent t4 "$REPO" idle)"
+set_fg t3 "$REPO/src"
+set_fg t4 /elsewhere
+run_send "$REPO" "$REPO/src/a.txt" 1
+out=$(log)
+assert_contains "$out" "$FOCUS t3" "launched in ~, cd'd into the repo"
+assert_not_contains "$out" "$FOCUS t4" "launched in repo, left it"
+
+echo "nested worktree: a file inside it maps to that worktree, not the opened repo"
+setup_case nested
+git -C "$REPO" worktree add -q "$REPO/nested" -b nested 2>/dev/null
+mkdir -p "$REPO/nested/src"; echo x > "$REPO/nested/src/b.txt"
+set_agents "$(agent t3 "$REPO" idle)" "$(agent t4 "$REPO/nested" idle)"
+run_send "$REPO" "$REPO/nested/src/b.txt" 1
+out=$(log)
+assert_contains "$out" "$FOCUS t4" "nested worktree agent"
+assert_not_contains "$out" "$FOCUS t3" "outer repo agent"
+
+echo "no active editor: root from env, selection ignored, add refuses"
+setup_case nofile
+set_agents "$(agent t3 "$REPO" idle)"
+ZED_SELECTED_TEXT=stale run_send "$REPO" "" ""
+out=$(log)
+assert_contains "$out" "$FOCUS t3" "focused"
+assert_not_contains "$out" "terminal.paste" "no paste"
+run_add "$REPO" "" ""
+assert_eq '[]' "$(batch_json | jq -c .)" "nothing queued"
+assert_contains "$(log)" "notify-send" "notified"
+run_add "$REPO" "$REPO/src/a.txt" 1
+: > "$STUB_LOG"
+ZED_SELECTED_TEXT=stale run_send "$REPO" "" ""
+assert_contains "$(sent)" "Review comments:" "batch submitted; stale selection not appended"
+assert_eq 1 "$(grep -c '^hc send' "$STUB_LOG")" "submitted"
+
+echo "symlinked file path still yields a relative mention"
+setup_case symlink
+set_agents "$(agent t3 "$REPO" idle)"
+ln -s "$REPO" "$TMP/symlink/link"
+ZED_SELECTED_TEXT=two run_send "$REPO" "$TMP/symlink/link/src/a.txt" 2
+assert_contains "$(pasted)" "@src/a.txt#L2" "relative"
+
+echo "failures: paste fails -> one-off not delivered; focus fails -> no paste, notified"
+setup_case failfocus1
+set_agents "$(agent t3 "$REPO" idle)"
+touch "$STUB_DIR/fail_focus"
+ZED_SELECTED_TEXT=two run_send "$REPO" "$REPO/src/a.txt" 2
+assert_not_contains "$(log)" "terminal.paste" "no paste when focus fails"
+assert_contains "$(log)" "notify-send" "notified"
+
+setup_case failpaste
+set_agents "$(agent t3 "$REPO" idle)"
+touch "$STUB_DIR/fail_paste"
+ZED_SELECTED_TEXT=two run_send "$REPO" "$REPO/src/a.txt" 2
+assert_contains "$(log)" "notify-send" "notified on paste failure"
+assert_not_contains "$(log)" "hc send" "never submits"
+
+echo "failures: hc send fails -> batch kept, no Enter"
+setup_case failsend
+set_agents "$(agent t3 "$REPO" idle)"
+run_add "$REPO" "$REPO/src/a.txt" 1
+touch "$STUB_DIR/fail_send"
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_eq 1 "$(batch_json | jq length)" "batch kept"
+assert_not_contains "$(log)" "hc keys" "no Enter"
+assert_contains "$(log)" "notify-send" "notified"
+
+echo "failures: focus fails on batch submit -> batch kept, nothing sent"
+setup_case failfocus2
+set_agents "$(agent t3 "$REPO" idle)"
+run_add "$REPO" "$REPO/src/a.txt" 1
+touch "$STUB_DIR/fail_focus"
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_eq 1 "$(batch_json | jq length)" "batch kept"
+assert_not_contains "$(log)" "hc send" "nothing sent"
+assert_not_contains "$(log)" "hc keys" "no Enter"
+
+echo "clipboard: non-empty restored with its type; empty clipboard is cleared afterwards"
+setup_case clip
+set_agents "$(agent t3 "$REPO" idle)"
+printf 'precious' > "$STUB_DIR/clipboard"
+ZED_SELECTED_TEXT=two run_send "$REPO" "$REPO/src/a.txt" 2
+assert_contains "$(log)" "wl-copy -t text/plain" "restored with MIME type"
+assert_eq precious "$(cat "$STUB_DIR/clipboard")" "restored"
+setup_case clipempty
+set_agents "$(agent t3 "$REPO" idle)"
+ZED_SELECTED_TEXT=two run_send "$REPO" "$REPO/src/a.txt" 2
+assert_contains "$(pasted)" "@src/a.txt#L2" "pasted"
+assert_contains "$(log)" "wl-copy --clear" "cleared"
+assert_eq "" "$(cat "$STUB_DIR/clipboard" 2>/dev/null)" "clipboard empty"
+
+echo "concurrency: simultaneous adds both land"
+setup_case conc
+for i in 1 2 3 4 5 6; do run_add "$REPO" "$REPO/src/a.txt" $((i % 4 + 1)) & done
+wait
+assert_eq 6 "$(batch_json | jq length)" "all adds kept"
 
 finish
