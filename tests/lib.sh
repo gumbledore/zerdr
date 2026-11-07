@@ -49,3 +49,11 @@ agent() { printf '{"address":"%s","agent":"claude-code","cwd":"%s","state":"live
 run_send() { "$ROOT/bin/zh" send "$@" >/dev/null 2>&1; }
 log() { cat "$STUB_LOG"; }
 pasted() { cat "$STUB_DIR/pasted" 2>/dev/null; }
+
+# run_add / run_clear: invoke bin/zh as the Zed tasks do.
+run_add() { "$ROOT/bin/zh" add "$@" >/dev/null 2>&1; }
+run_clear() { "$ROOT/bin/zh" clear "$@" >/dev/null 2>&1; }
+# set_note <text>: what the note prompt returns (never called = Esc).
+set_note() { printf '%s\n' "$1" > "$STUB_DIR/note"; }
+# batch_json <root>: the batch file contents ([] when none).
+batch_json() { cat "$XDG_STATE_HOME"/zerdr/batch/*.json 2>/dev/null || echo '[]'; }

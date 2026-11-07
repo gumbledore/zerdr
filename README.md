@@ -19,7 +19,31 @@ The old herdr TUI plugin (`open`/`review`/`commits`/`done`, `herdr-plugin.toml`)
 |---|---|---|
 | Zed | `ctrl-space` | `zh send`: nothing selected, focus the repo's agent and raise the herdr-app window |
 | Zed (editor) | `ctrl-space` with a selection | paste `@path#Lx-y` + the selection into the agent's input (no Enter), then focus it |
-| Zed (editor) | `ctrl-shift-space` | `zh add` (batch; not implemented yet) |
+| Zed (editor) | `ctrl-shift-space` | `zh add`: queue the selection (or cursor line) in the repo's review batch with a one-line note (`omarchy-menu-input`; Esc = no note); notifies the queued count |
+| Zed (editor) | `ctrl-space` with a batch | submit the batch (paste + Enter) and focus the agent; with a selection, prompt its note, append it, then submit all |
+| Zed task | "herdr: clear batch" | `zh clear`: discard the batch |
+
+Batch message (selections trimmed to 20 lines, `...` marks the cut):
+
+````
+Review comments:
+
+1. @src/a.txt#L2-3
+```
+two
+three
+```
+first note
+
+2. @src/a.txt#L4
+```
+four
+```
+````
+
+A blocked agent keeps the batch (focus + notification). A working agent receives it (it queues).
+The batch is cleared only after a successful submit, so it is never sent twice.
+
 
 Pasted format (the code fence keeps multi-line selections intact):
 
@@ -40,7 +64,7 @@ A blocked agent gets no paste: it is focused and a notification says so. No agen
 so `zh` copies the text with `wl-copy`, focuses the agent, runs `herdr-app do terminal.paste`
 and restores the clipboard.
 
-State: `~/.local/state/zerdr/batch/<sha1 of git root>.json` (batch items, used from `add`/batch submit).
+State: `~/.local/state/zerdr/batch/<sha1 of git root>.json` (items `{path, lines, selection, note}`).
 
 ## Install
 
@@ -52,7 +76,7 @@ Then add the herdr-app keys it prints and put the mod in a layout, e.g. a 1px bl
 `{"type":"block","size":{"px":1},"content":{"mod":"zerdr"}}`.
 
 Config (env): `ZH_TERMINAL_CLASS` (Hyprland class to raise; default `herdr-app`).
-Needs `hc`, `herdr-app`, `jq`, `wl-clipboard`, `hyprctl`, `notify-send`.
+Needs `hc`, `herdr-app`, `jq`, `wl-clipboard`, `hyprctl`, `notify-send`, `omarchy-menu-input`.
 
 ## Known limits
 

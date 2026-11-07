@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # zh — glue between Zed and the herdr-app agents.
 #   zh send <root> <file> <row>   ctrl-space: focus the repo's agent, or paste the selection (no Enter)
-#   zh add <root> <file> <row>    add selection to the batch   (ticket 07)
-#   zh clear <root>               drop the batch               (ticket 07)
+#   zh add <root> <file> <row>    ctrl-shift-space: queue selection (or cursor line) + one-line note
+#   zh clear <root>               drop the repo's batch
+# With a batch, send submits it (after prompting a note for any selection).
 # The selection arrives via ZED_SELECTED_TEXT (Zed word-splits task args).
 set -euo pipefail
 
@@ -73,8 +74,38 @@ mention_ref() {
   ((n > 1)) && echo "$ref#L$start-$((start + n - 1))" || echo "$ref#L$start"
 }
 
-# send_batch <root> <terminal> <selection>: rows 3-4 of the truth table (ticket 07)
-send_batch() { notify "batch submit not implemented"; return 1; }
+# add_item <root> <file> <row> <selection>: prompt a one-line note (Esc = none) and queue it
+add_item() {
+  local root=$1 ref note f
+  ref=$(mention_ref "$1" "$2" "$3" "$4") ref=${ref#@}
+  note=$(omarchy-menu-input "Review note (Esc = none)" 2>/dev/null) || note=""
+  f=$(batch_file "$root")
+  mkdir -p "$(dirname "$f")"
+  [[ -s $f ]] || echo '[]' >"$f"
+  jq --arg p "${ref%%#*}" --arg l "${ref##*#}" --arg s "$4" --arg n "${note%%$'\n'*}" \
+    '. + [{path: $p, lines: $l, selection: $s, note: $n}]' "$f" >"$f.tmp" && mv "$f.tmp" "$f"
+}
+
+# batch_message <root>: the text submitted to the agent (selections trimmed to 20 lines)
+batch_message() {
+  jq -r 'def code: (.selection | split("\n")) as $l | (if ($l | length) > 20 then $l[:20] + ["..."] else $l end) | join("\n");
+    "Review comments:\n\n" + (to_entries | map("\(.key + 1). @\(.value.path)#\(.value.lines)\n```\n\(.value | code)\n```"
+      + (if .value.note != "" then "\n\(.value.note)" else "" end)) | join("\n\n"))' "$(batch_file "$1")"
+}
+
+# send_batch <root> <terminal> <status> <selection>: rows 3-4 of the truth table
+send_batch() {
+  local root=$1 term=$2 status=$3 sel=$4 f
+  if [[ $status == blocked ]]; then
+    focus "$term"
+    notify "Agent $term is blocked; batch kept"
+    return 1
+  fi
+  [[ -n $sel ]] && add_item "$root" "$file" "$row" "$sel"
+  focus "$term"
+  # like hc send, pause between paste and Enter so the agent sees one paste, then submit
+  paste_focused "$(batch_message "$root")" && sleep "${ZH_PASTE_GAP:-0.5}" && hc keys "$term" enter >/dev/null && rm -f "$(batch_file "$root")"
+}
 
 cmd=${1:-}; shift || true
 case $cmd in
@@ -84,7 +115,8 @@ send)
   tgt=$(target_for "$root") || { notify "No herdr agent in $root"; exit 1; }
   read -r term status <<<"$tgt"
   if ((  $(batch_count "$root") > 0 )); then
-    send_batch "$root" "$term" "$sel" || exit 1
+    send_batch "$root" "$term" "$status" "$sel" || exit 1
+    exit 0
   elif [[ -n $sel ]]; then
     focus "$term"
     if [[ $status == blocked ]]; then
@@ -96,12 +128,20 @@ send)
   fi
   focus "$term"
   ;;
-add | clear)
-  notify "zh $cmd not implemented"
-  exit 1
+add)
+  root=$(root_of "$1") file=$2 row=$3 sel=${ZED_SELECTED_TEXT:-}
+  sel=${sel%$'\n'}
+  [[ -n $sel ]] || sel=$(sed -n "${row}p" "$file")
+  add_item "$root" "$file" "$row" "$sel"
+  n=$(batch_count "$root")
+  notify "$n comment$( ((n == 1)) || echo s) queued for $(basename "$root")"
+  ;;
+clear)
+  rm -f "$(batch_file "$(root_of "$1")")"
+  notify "Batch cleared"
   ;;
 *)
-  sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
   exit 2
   ;;
 esac

@@ -128,8 +128,119 @@ assert_contains "$out" "notify-send" "notified"
 assert_not_contains "$out" "agent.focus" "no focus"
 assert_not_contains "$out" "terminal.paste" "no paste"
 
-echo "never presses Enter or hc send, in any scenario"
-assert_not_contains "$(cat "$TMP"/*/stub/log)" "hc send" "global: no hc send"
-assert_not_contains "$(cat "$TMP"/*/stub/log)" "hc keys" "global: no hc keys"
+echo "add: selection + note queues an item and notifies the count"
+setup_case add1
+set_agents "$(agent t3 "$REPO" idle)"
+set_note "rename this"
+ZED_SELECTED_TEXT=$'two\nthree' run_add "$REPO" "$REPO/src/a.txt" 2
+assert_eq '[{"path":"src/a.txt","lines":"L2-3","selection":"two\nthree","note":"rename this"}]' "$(batch_json | jq -c .)" "item stored"
+assert_contains "$(log)" "omarchy-menu-input" "prompted"
+assert_contains "$(log)" "notify-send zh 1 comment" "count notified"
+assert_not_contains "$(log)" "terminal.paste" "add never sends"
+
+echo "add: Esc adds without a note; no selection uses the cursor line"
+setup_case add2
+run_add "$REPO" "$REPO/src/a.txt" 3
+assert_eq '[{"path":"src/a.txt","lines":"L3","selection":"three","note":""}]' "$(batch_json | jq -c .)" "cursor line, no note"
+set_note "again"
+run_add "$REPO" "$REPO/src/a.txt" 4
+assert_eq 2 "$(batch_json | jq length)" "appended"
+assert_contains "$(log)" "notify-send zh 2 comments" "plural count"
+
+echo "add: batches are per git root"
+setup_case addroot
+run_add "$REPO" "$REPO/src/a.txt" 1
+run_add "$WT" "$WT/src/a.txt" 1
+assert_eq 2 "$(ls "$XDG_STATE_HOME"/zerdr/batch/*.json | wc -l)" "one file per root"
+
+echo "clear: discards the batch"
+setup_case clear
+run_add "$REPO" "$REPO/src/a.txt" 1
+run_clear "$REPO"
+assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
+
+echo "row 3: batch + no selection submits, presses Enter once, clears, focuses"
+setup_case sub3
+set_agents "$(agent t3 "$REPO" idle)"
+set_note "first"
+ZED_SELECTED_TEXT=$'two\nthree' run_add "$REPO" "$REPO/src/a.txt" 2
+set_note "second"
+ZED_SELECTED_TEXT=four run_add "$REPO" "$REPO/src/a.txt" 4
+: > "$STUB_LOG"
+run_send "$REPO" "$REPO/src/a.txt" 1
+out=$(log)
+assert_eq $'Review comments:\n\n1. @src/a.txt#L2-3\n```\ntwo\nthree\n```\nfirst\n\n2. @src/a.txt#L4\n```\nfour\n```\nsecond\n' "$(pasted)"$'\n' "message"
+assert_eq 1 "$(grep -c '^hc keys t3 enter' <<<"$out")" "Enter once"
+assert_not_contains "$out" "hc send" "no hc send"
+assert_contains "$out" "$FOCUS t3" "focused"
+assert_eq '[]' "$(batch_json | jq -c .)" "batch cleared"
+f=$(grep -n 'agent.focus' <<<"$out" | head -1 | cut -d: -f1); p=$(grep -n 'terminal.paste' <<<"$out" | head -1 | cut -d: -f1); k=$(grep -n 'hc keys' <<<"$out" | head -1 | cut -d: -f1)
+if ((f < p && p < k)); then pass; else fail "order focus < paste < Enter"; fi
+: > "$STUB_LOG"
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_not_contains "$(log)" "hc keys" "no double send"
+
+echo "row 4: batch + selection prompts for a note, appends, submits all"
+setup_case sub4
+set_agents "$(agent t3 "$REPO" idle)"
+run_add "$REPO" "$REPO/src/a.txt" 1
+set_note "now this"
+: > "$STUB_LOG"
+ZED_SELECTED_TEXT=three run_send "$REPO" "$REPO/src/a.txt" 3
+assert_contains "$(log)" "omarchy-menu-input" "prompted"
+assert_contains "$(pasted)" "1. @src/a.txt#L1"$'\n```\none\n```\n\n2. @src/a.txt#L3'$'\n```\nthree\n```\nnow this' "both items"
+assert_eq 1 "$(grep -c '^hc keys' "$STUB_LOG")" "Enter once"
+assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
+echo "row 4: Esc on the note still appends and submits"
+setup_case sub4b
+set_agents "$(agent t3 "$REPO" idle)"
+run_add "$REPO" "$REPO/src/a.txt" 1
+ZED_SELECTED_TEXT=three run_send "$REPO" "$REPO/src/a.txt" 3
+assert_contains "$(pasted)" "2. @src/a.txt#L3"$'\n```\nthree\n```' "appended without note"
+assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
+
+echo "message: long selections are trimmed to 20 lines"
+setup_case sub-trim
+set_agents "$(agent t3 "$REPO" idle)"
+seq 1 30 > "$REPO/src/long.txt"
+ZED_SELECTED_TEXT="$(seq 1 30)" run_add "$REPO" "$REPO/src/long.txt" 1
+run_send "$REPO" "$REPO/src/long.txt" 1
+assert_contains "$(pasted)" "@src/long.txt#L1-30" "full range in header"
+assert_contains "$(pasted)" $'\n20\n...\n```' "trimmed with marker"
+assert_not_contains "$(pasted)" $'\n21\n' "line 21 dropped"
+
+echo "blocked agent: batch kept, nothing sent, focused, notified"
+setup_case blockedbatch
+set_agents "$(agent t3 "$REPO" blocked)"
+run_add "$REPO" "$REPO/src/a.txt" 1
+: > "$STUB_LOG"
+ZED_SELECTED_TEXT=three run_send "$REPO" "$REPO/src/a.txt" 3
+out=$(log)
+assert_eq 1 "$(batch_json | jq length)" "batch kept, selection not appended"
+assert_contains "$out" "$FOCUS t3" "focused"
+assert_contains "$out" "notify-send" "notified"
+assert_not_contains "$out" "terminal.paste" "no paste"
+assert_not_contains "$out" "hc keys" "no Enter"
+assert_not_contains "$out" "omarchy-menu-input" "no prompt"
+
+echo "working agent: batch delivered"
+setup_case sub-working
+set_agents "$(agent t3 "$REPO" working)"
+run_add "$REPO" "$REPO/src/a.txt" 1
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_contains "$(pasted)" "Review comments:" "delivered"
+assert_eq '[]' "$(batch_json | jq -c .)" "cleared"
+
+echo "no agent: batch kept"
+setup_case sub-noagent
+run_add "$REPO" "$REPO/src/a.txt" 1
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_eq 1 "$(batch_json | jq length)" "kept"
+
+echo "never hc send; Enter only from batch submits"
+for l in "$TMP"/*/stub/log; do
+  assert_not_contains "$(cat "$l")" "hc send" "no hc send ($l)"
+  [[ $(basename "$(dirname "$(dirname "$l")")") == sub* ]] || assert_not_contains "$(cat "$l")" "hc keys" "no Enter outside batch submit ($l)"
+done
 
 finish
