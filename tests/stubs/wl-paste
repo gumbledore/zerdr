@@ -1,0 +1,5 @@
+#!/bin/bash
+# --list-types prints text/plain when the clipboard has content; -t <type> prints it.
+[[ -s $STUB_DIR/clipboard ]] || exit 1
+[[ ${1:-} == --list-types ]] && { echo text/plain; exit 0; }
+cat "$STUB_DIR/clipboard"

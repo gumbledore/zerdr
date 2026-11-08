@@ -1,0 +1,10 @@
+#!/bin/bash
+# Logs the call; `status` returns $STUB_DIR/status.json; `do terminal.paste` snapshots the clipboard.
+# fail_focus / fail_paste files in $STUB_DIR make agent.focus / terminal.paste fail.
+echo "herdr-app $*" >> "$STUB_LOG"
+case "$*" in
+  status) cat "$STUB_DIR/status.json" 2>/dev/null || echo '{}' ;;
+  "do terminal.paste") [[ -f $STUB_DIR/fail_paste ]] && exit 1; cp "$STUB_DIR/clipboard" "$STUB_DIR/pasted" ;;
+  "do agent.focus"*) [[ -f $STUB_DIR/fail_focus ]] && exit 1 ;;
+esac
+exit 0

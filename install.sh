@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Link the herdr plugin and install Zed tasks/keymap (never overwrites).
+# Link the herdr-app mod; install Zed tasks/keymap (never overwrites).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 zed=${XDG_CONFIG_HOME:-$HOME/.config}/zed
-
-herdr plugin link "$here" >/dev/null && echo "linked herdr plugin kmg.zed"
 
 mkdir -p "$zed"
 for f in tasks keymap; do
@@ -16,25 +14,13 @@ for f in tasks keymap; do
   fi
 done
 
+mods=${XDG_CONFIG_HOME:-$HOME/.config}/herdr-app/mods
+mkdir -p "$mods"
+ln -sfn "$here/herdr-app/zerdr" "$mods/zerdr" && echo "linked herdr-app mod zerdr"
+
 cat <<'MSG'
 
-Suggested herdr keybindings (~/.config/herdr/config.toml).
-prefix+z is zoom by default: move it first, e.g. zoom = "prefix+f".
-  [[keys.command]]
-  key = "prefix+z"
-  type = "plugin_action"
-  command = "kmg.zed.open"
-  description = "open project in Zed"
-
-  [[keys.command]]
-  key = "prefix+shift+z"
-  type = "plugin_action"
-  command = "kmg.zed.review"
-  description = "review changes in Zed"
-
-  [[keys.command]]
-  key = "prefix+ctrl+z"
-  type = "plugin_action"
-  command = "kmg.zed.commits"
-  description = "open agent commits in Zed"
+Add to ~/.config/herdr-app/keys.json ("global"):
+  "alt-z": "zerdr.open",
+  "alt-shift-z": "zerdr.review"
 MSG

@@ -1,0 +1,5 @@
+#!/bin/bash
+# Logs the prompt; prints the canned $STUB_DIR/note, or cancels (exit 1, no output) when absent.
+echo "omarchy-menu-input $*" >> "$STUB_LOG"
+[[ -f $STUB_DIR/note ]] || exit 1
+cat "$STUB_DIR/note"
