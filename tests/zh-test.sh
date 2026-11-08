@@ -342,4 +342,18 @@ for i in 1 2 3 4 5 6; do run_add "$REPO" "$REPO/src/a.txt" $((i % 4 + 1)) & done
 wait
 assert_eq 6 "$(batch_json | jq length)" "all adds kept"
 
+echo "paths with spaces are quoted so Claude attaches the file"
+setup_case spaces
+set_agents "$(agent t3 "$REPO" idle)"
+cp "$REPO/src/a.txt" "$REPO/src/my file.txt"
+ZED_SELECTED_TEXT=$'two\nthree' run_send "$REPO" "$REPO/src/my file.txt" 2
+assert_contains "$(pasted)" '@"src/my file.txt#L2-3"'$'\n' "one-off quoted"
+set_note "n"
+ZED_SELECTED_TEXT=four run_add "$REPO" "$REPO/src/my file.txt" 4
+ZED_SELECTED_TEXT=one run_add "$REPO" "$REPO/src/a.txt" 1
+: > "$STUB_LOG"
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_contains "$(sent)" '1. @"src/my file.txt#L4"'$'\n' "batch quoted"
+assert_contains "$(sent)" '2. @src/a.txt#L1'$'\n' "plain path unquoted"
+
 finish

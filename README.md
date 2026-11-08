@@ -82,6 +82,17 @@ Then add the herdr-app keys it prints and put the mod in a layout, e.g. a 1px bl
 Config (env): `ZH_TERMINAL_CLASS` (Hyprland class to raise; default `herdr-app`).
 Needs `hc`, `herdr-app`, `jq`, `wl-clipboard`, `hyprctl`, `notify-send`, `omarchy-menu-input`.
 
+Add the following to local claude settings to allow writing to installed location if working with a development copy:
+
+```{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": ["~/.local/share/zerdr"]
+    }
+  }
+}
+```
+
 ## Known limits
 
 - The tasks pass only `$ZED_WORKTREE_ROOT`; `zh` reads `ZED_FILE`, `ZED_ROW`, `ZED_SELECTED_TEXT` from the task env
