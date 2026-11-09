@@ -7,7 +7,7 @@ Drive herdr-app agents from Zed: jump to the repo's agent, or paste a selection 
 | Piece | What it does |
 |---|---|
 | `bin/zh` | Glue CLI called by the Zed tasks. Backend is herdr-app / `hc` only. |
-| `herdr-app/zerdr/` | herdr-app mod `zerdr` (linked into `~/.config/herdr-app/mods/` by `install.sh`): `zerdr.open` opens the pane's git root in Zed, `zerdr.review` shows the Changes panel. It must sit in a layout block. |
+| `herdr-app/zerdr/` | herdr-app mod `zerdr` (linked into `~/.config/herdr-app/mods/` by `install.sh`): `zerdr.open` opens the pane's git root in Zed, `zerdr.review` opens the latest commit in Zed's commit view. It must sit in a layout block. |
 | `zed/tasks.json`, `zed/keymap.json` | Zed tasks "herdr: focus/send", "herdr: add to batch", "herdr: clear batch" and their keys. |
 | `tests/` | Stub-PATH tests: `bash tests/run.sh`. |
 
