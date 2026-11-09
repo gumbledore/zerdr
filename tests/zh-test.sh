@@ -356,4 +356,25 @@ run_send "$REPO" "$REPO/src/a.txt" 1
 assert_contains "$(sent)" '1. @"src/my file.txt#L4"'$'\n' "batch quoted"
 assert_contains "$(sent)" '2. @src/a.txt#L1'$'\n' "plain path unquoted"
 
+echo "clipboard: a long type list (browser copy) is still restored, not cleared"
+setup_case cliptypes
+set_agents "$(agent t3 "$REPO" idle)"
+printf 'precious' > "$STUB_DIR/clipboard"
+{ echo text/plain; for i in $(seq 200000); do echo "x-type/$i"; done; } > "$STUB_DIR/cliptypes"
+ZED_SELECTED_TEXT=two run_send "$REPO" "$REPO/src/a.txt" 2
+assert_not_contains "$(log)" "wl-copy --clear" "not cleared"
+assert_eq precious "$(cat "$STUB_DIR/clipboard")" "restored"
+
+echo "fences: a selection containing backticks gets a longer fence"
+setup_case fence
+set_agents "$(agent t3 "$REPO" idle)"
+printf 'a\n```sh\nls\n```\n' > "$REPO/src/md.txt"
+ZED_SELECTED_TEXT=$'```sh\nls\n```' run_send "$REPO" "$REPO/src/md.txt" 2
+assert_eq $'@src/md.txt#L2-4\n````\n```sh\nls\n```\n````' "$(pasted)" "one-off fence"
+set_note ""
+ZED_SELECTED_TEXT=$'```sh\nls\n```' run_add "$REPO" "$REPO/src/md.txt" 2
+: > "$STUB_LOG"
+run_send "$REPO" "$REPO/src/a.txt" 1
+assert_eq $'Review comments:\n\n1. @src/md.txt#L2-4\n````\n```sh\nls\n```\n````' "$(sent)" "batch fence"
+
 finish

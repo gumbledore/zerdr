@@ -61,7 +61,9 @@ focus() {
 paste_focused() {
   local tmp type rc=0
   tmp=$(mktemp) || return 1
-  type=$(wl-paste --list-types 2>/dev/null | head -n1) || type=""
+  # no pipe: under pipefail a SIGPIPE would blank $type and the restore would wipe the clipboard
+  type=""
+  if wl-paste --list-types >"$tmp" 2>/dev/null; then read -r type <"$tmp" || true; fi
   if [[ -n $type ]]; then wl-paste -t "$type" >"$tmp" 2>/dev/null || type=""; fi
   printf '%s' "$1" | wl-copy || rc=1
   ((rc)) || herdr-app do terminal.paste >/dev/null || rc=1
@@ -70,6 +72,9 @@ paste_focused() {
   rm -f "$tmp"
   return $rc
 }
+
+# fence <text>: a backtick fence longer than any backtick run in <text>
+fence() { local f='```'; while [[ $1 == *"$f"* ]]; do f+='`'; done; printf '%s' "$f"; }
 
 # "path#Lx-y" for the selection (ZED_ROW is normally its start; tolerate it being the end)
 mention_ref() {
@@ -105,7 +110,8 @@ add_item() {
 # batch_message <root>: the text submitted to the agent (selections trimmed to 20 lines)
 batch_message() {
   jq -r 'def code: (.selection | split("\n")) as $l | (if ($l | length) > 20 then $l[:20] + ["..."] else $l end) | join("\n");
-    "Review comments:\n\n" + (to_entries | map("\(.key + 1). \("\(.value.path)#\(.value.lines)" | if test(" ") then "@\"\(.)\"" else "@\(.)" end)\n```\n\(.value | code)\n```"
+    def fenced: . as $c | ("```" | until(. as $f | $c | contains($f) | not; . + "`")) as $f | "\($f)\n\($c)\n\($f)";
+    "Review comments:\n\n" + (to_entries | map("\(.key + 1). \("\(.value.path)#\(.value.lines)" | if test(" ") then "@\"\(.)\"" else "@\(.)" end)\n\(.value | code | fenced)"
       + (if .value.note != "" then "\n\(.value.note)" else "" end)) | join("\n\n"))' "$(batch_file "$1")"
 }
 
@@ -153,7 +159,8 @@ send)
     if ((  $(batch_count "$root") > 0 )); then submit_batch "$root" "$term" || exit 1; else focus "$term"; fi
   elif [[ -n $sel ]]; then
     focus "$term" || { notify "Could not focus $term; selection not sent"; exit 1; }
-    paste_focused "$(at "$(mention_ref "$root" "$file" "$row" "$sel")")"$'\n```\n'"$sel"$'\n```\n' || { notify "Paste failed"; exit 1; }
+    fen=$(fence "$sel")
+    paste_focused "$(at "$(mention_ref "$root" "$file" "$row" "$sel")")"$'\n'"$fen"$'\n'"$sel"$'\n'"$fen"$'\n' || { notify "Paste failed"; exit 1; }
   else
     focus "$term"
   fi
